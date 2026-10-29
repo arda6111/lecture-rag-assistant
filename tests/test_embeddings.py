@@ -81,12 +81,12 @@ def test_ask_reports_embedding_model_error(
             "--index-dir",
             str(index_dir),
             "--model",
-            "nope",
+            "all-MiniLM-L6-v2",
         ],
     )
 
     assert_clean_failure(result)
-    assert "Could not load embedding model 'nope'" in result.output
+    assert "Could not load embedding model 'all-MiniLM-L6-v2'" in result.output
 
 class NoDimensionModel:
     """Sentence-transformer stand-in that reports no embedding dimension."""

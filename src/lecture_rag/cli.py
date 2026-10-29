@@ -19,7 +19,7 @@ from .eval import (
     run_full_evaluation,
 )
 from .generation import Generator
-from .index import IndexMetadataError, IndexModelMismatchError, VectorIndex
+from .index import IndexModelMismatchError, InvalidIndexError, VectorIndex
 from .pdf_loader import load_directory
 from .retrieval import (
     RetrievalMode,
@@ -61,7 +61,7 @@ def _load_retriever(
             mode=mode,
             allow_model_mismatch=allow_model_mismatch,
         )
-    except IndexMetadataError as e:
+    except InvalidIndexError as e:
         raise click.ClickException(str(e)) from e
     except IndexModelMismatchError as e:
         raise click.ClickException(str(e)) from e
@@ -392,13 +392,11 @@ def eval(
     if not eval_set.questions:
         raise click.ClickException(f"Eval set is empty: {eval_file}")
 
-    if output is not None:
-        _prepare_output_dir(output)
-
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
 
     if output is not None:
+        _prepare_output_dir(output)
         command = (
             f"lecture-rag eval --eval-file {eval_file.as_posix()} --k {k} "
             f"--abstain-threshold {abstain_threshold:.2f} --output {output.as_posix()}"

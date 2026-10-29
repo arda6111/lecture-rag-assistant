@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from lecture_rag.index import (
     IndexMetadataError,
     IndexModelMismatchError,
+    InvalidIndexError,
     VectorIndex,
     normalize_model_name,
     shorten_model_name,
@@ -109,8 +111,12 @@ def test_load_rejects_document_count_mismatch(
     documents = json.loads(docs_path.read_text(encoding="utf-8"))
     docs_path.write_text(json.dumps(documents[:-1]), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(InvalidIndexError, match="does not match") as exc_info:
         VectorIndex.load(index_path)
+
+    message = str(exc_info.value)
+    assert str(docs_path) in message
+    assert message.endswith("Re-run `lecture-rag ingest` to rebuild the index.")
 
 def test_save_writes_index_metadata(
     sample_documents: list[Document],
@@ -349,10 +355,10 @@ def test_check_model_raises_when_names_differ() -> None:
     assert "--allow-model-mismatch" in message
 
 
-def test_check_model_allows_name_mismatch_with_warning(
+def test_check_model_allows_name_mismatch_without_logging(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Allowing a name mismatch returns a warning and logs one."""
+    """Allowing a name mismatch returns only a warning for the caller to print."""
     index = VectorIndex(dimension=384, model_name="model-a")
 
     with caplog.at_level(logging.WARNING):
@@ -362,7 +368,7 @@ def test_check_model_allows_name_mismatch_with_warning(
         "Embedding model 'model-b' differs from the index model 'model-a'; "
         "results may be unreliable."
     )
-    assert "differs from the index model" in caplog.text
+    assert caplog.records == []
 
 
 def test_check_model_normalizes_prefix(
@@ -424,3 +430,185 @@ def test_check_model_shortens_long_names_in_errors() -> None:
     assert long_name not in message
     assert shorten_model_name(long_name) in message
     assert "..." in message
+
+
+REBUILD_SUFFIX = "Re-run `lecture-rag ingest` to rebuild the index."
+
+
+def save_test_index(
+    temp_dir: Path,
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+) -> Path:
+    """Build and save an index for invalid-index tests."""
+    index = VectorIndex(dimension=384, model_name="model-a")
+    index.add_documents(sample_documents, sample_embeddings)
+    index_path = temp_dir / "saved_index"
+    index.save(index_path)
+    return index_path
+
+
+def test_load_rejects_symlinked_index_directory(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """A symlinked index directory is rejected even when it points at a valid index."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    link_path = temp_dir / "linked_index"
+    os.symlink(index_path, link_path)
+
+    with pytest.raises(InvalidIndexError, match="symlink") as exc_info:
+        VectorIndex.load(link_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+def test_load_rejects_index_path_that_is_not_a_directory(
+    temp_dir: Path,
+) -> None:
+    """An index path that is a regular file is rejected."""
+    index_path = temp_dir / "index_file"
+    index_path.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(InvalidIndexError, match="not a directory") as exc_info:
+        VectorIndex.load(index_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+def test_load_rejects_empty_index_directory(temp_dir: Path) -> None:
+    """An empty index directory names the first missing index file."""
+    index_path = temp_dir / "empty_index"
+    index_path.mkdir()
+
+    with pytest.raises(InvalidIndexError, match="index.faiss") as exc_info:
+        VectorIndex.load(index_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+@pytest.mark.parametrize("file_name", ["index.faiss", "documents.json"])
+def test_load_rejects_missing_index_file(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+    file_name: str,
+) -> None:
+    """A missing index file is named in the error."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    (index_path / file_name).unlink()
+
+    with pytest.raises(InvalidIndexError, match=file_name) as exc_info:
+        VectorIndex.load(index_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+@pytest.mark.parametrize("file_name", ["index.faiss", "documents.json"])
+def test_load_rejects_symlinked_index_file(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+    file_name: str,
+) -> None:
+    """A symlinked index file is rejected even when its target is valid."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    file_path = index_path / file_name
+    target = temp_dir / f"valid_{file_name}"
+    file_path.rename(target)
+    os.symlink(target, file_path)
+
+    with pytest.raises(InvalidIndexError, match="symlink") as exc_info:
+        VectorIndex.load(index_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+@pytest.mark.parametrize("file_name", ["index.faiss", "documents.json"])
+def test_load_rejects_dangling_symlinked_index_file(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+    file_name: str,
+) -> None:
+    """A dangling index file symlink is rejected instead of treated as missing."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    file_path = index_path / file_name
+    file_path.unlink()
+    os.symlink(temp_dir / f"missing_{file_name}", file_path)
+
+    with pytest.raises(InvalidIndexError, match="symlink") as exc_info:
+        VectorIndex.load(index_path)
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+def test_load_rejects_corrupt_faiss_index(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """Garbage bytes in index.faiss are reported with the file path."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    faiss_path = index_path / "index.faiss"
+    faiss_path.write_bytes(b"not a faiss index")
+
+    with pytest.raises(InvalidIndexError) as exc_info:
+        VectorIndex.load(index_path)
+
+    message = str(exc_info.value)
+    assert str(faiss_path) in message
+    assert message.endswith(REBUILD_SUFFIX)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"{not json",
+        b"\xff\xfe\xfa",
+        b"{}",
+        b"[1]",
+    ],
+)
+def test_load_rejects_invalid_documents_json(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+    content: bytes,
+) -> None:
+    """Malformed, non-list or invalid document entries name documents.json."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    docs_path = index_path / "documents.json"
+    docs_path.write_bytes(content)
+
+    with pytest.raises(InvalidIndexError) as exc_info:
+        VectorIndex.load(index_path)
+
+    message = str(exc_info.value)
+    assert str(docs_path) in message
+    assert message.endswith(REBUILD_SUFFIX)
+
+
+def test_check_model_name_quotes_a_model_name_with_a_space() -> None:
+    """A model name with a space is quoted in the runnable hint."""
+    index = VectorIndex(dimension=384, model_name="my model")
+
+    with pytest.raises(IndexModelMismatchError) as exc_info:
+        index.check_model_name("other-model")
+
+    assert "Use --model 'my model'" in str(exc_info.value)
+
+
+def test_check_model_name_omits_hint_for_shortened_model_name() -> None:
+    """A shortened model name is not shown as a runnable --model command."""
+    long_name = "x" * 300
+    index = VectorIndex(dimension=384, model_name=long_name)
+
+    with pytest.raises(IndexModelMismatchError) as exc_info:
+        index.check_model_name("other-model")
+
+    message = str(exc_info.value)
+    assert "--model " not in message
+    assert "shortened" in message
+    assert long_name not in message

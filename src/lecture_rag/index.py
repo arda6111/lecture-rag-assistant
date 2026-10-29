@@ -2,10 +2,12 @@
 
 import json
 import logging
+import shlex
 from pathlib import Path
 
 import faiss
 import numpy as np
+from pydantic import ValidationError
 
 from .models import Document
 
@@ -49,8 +51,20 @@ class IndexModelMismatchError(RuntimeError):
     """Raised when an embedding model does not match the index."""
 
 
-class IndexMetadataError(ValueError):
+class InvalidIndexError(ValueError):
+    """Raised when an index file is missing, invalid or unsafe."""
+
+
+class IndexMetadataError(InvalidIndexError):
     """Raised when index metadata is missing or invalid."""
+
+
+def _invalid_error(path: Path, reason: str) -> InvalidIndexError:
+    """Build a consistent invalid index error."""
+    return InvalidIndexError(
+        f"Invalid index at {path}: {reason}. "
+        "Re-run `lecture-rag ingest` to rebuild the index."
+    )
 
 
 def _metadata_error(path: Path, reason: str) -> IndexMetadataError:
@@ -59,6 +73,13 @@ def _metadata_error(path: Path, reason: str) -> IndexMetadataError:
         f"Invalid index metadata in {path}: {reason}. "
         "Re-run `lecture-rag ingest` to rebuild the index."
     )
+
+
+def _model_hint(model_name: str) -> str:
+    """Build a hint that only suggests a runnable model name when it fits."""
+    if len(model_name) <= 200:
+        return f"Use --model {shlex.quote(model_name)}"
+    return "Use the model the index was built with (its name is shortened above)"
 
 
 class VectorIndex:
@@ -75,6 +96,77 @@ class VectorIndex:
         self.model_name = model_name
         self.index: faiss.Index = faiss.IndexFlatIP(dimension)
         self.documents: list[Document] = []
+
+    def check_model_name(
+        self,
+        model_name: str,
+        allow_model_mismatch: bool = False,
+    ) -> str | None:
+        """Check that an embedding model name can query this index.
+
+        Args:
+            model_name: Name of the embedding model that will query the index
+            allow_model_mismatch: Continue with a warning when the model name
+                differs from the model the index was built with
+
+        Returns:
+            A warning message when the model names differ and mismatches are
+            allowed, otherwise None
+
+        Raises:
+            IndexModelMismatchError: If the model name differs without
+                permission to continue
+        """
+        if self.model_name is None:
+            return None
+
+        if normalize_model_name(model_name) == normalize_model_name(self.model_name):
+            return None
+
+        shown = shorten_model_name(model_name)
+        shown_index = shorten_model_name(self.model_name)
+        if not allow_model_mismatch:
+            raise IndexModelMismatchError(
+                f"Embedding model {shown!r} does not match the model the index "
+                f"was built with ({shown_index!r}). {_model_hint(self.model_name)} "
+                "or re-run `lecture-rag ingest` with this model, or pass "
+                "--allow-model-mismatch to continue anyway."
+            )
+
+        return (
+            f"Embedding model {shown!r} differs from the index model "
+            f"{shown_index!r}; results may be unreliable."
+        )
+
+    def check_dimension(self, model_name: str, dimension: int) -> None:
+        """Check that an embedding model dimension can query this index.
+
+        Args:
+            model_name: Name of the embedding model that will query the index
+            dimension: Dimensionality of vectors produced by the model
+
+        Raises:
+            IndexModelMismatchError: If the model dimension differs from the
+                index dimension
+        """
+        if dimension == self.dimension:
+            return
+
+        shown = shorten_model_name(model_name)
+        if self.model_name is not None:
+            shown_index = shorten_model_name(self.model_name)
+            raise IndexModelMismatchError(
+                f"Embedding model {shown!r} produces {dimension}-dimensional "
+                f"vectors, but the index was built with {shown_index!r} "
+                f"({self.dimension} dimensions). {_model_hint(self.model_name)} "
+                "or re-run `lecture-rag ingest` with this model."
+            )
+        raise IndexModelMismatchError(
+            f"Embedding model {shown!r} produces {dimension}-dimensional "
+            f"vectors, but the index was built with a {self.dimension}-dimensional "
+            "model. Use the model the index was built with or re-run "
+            "`lecture-rag ingest` with this model."
+        )
 
     def check_model(
         self,
@@ -99,47 +191,10 @@ class VectorIndex:
                 index dimension, or if the model name differs without
                 permission to continue
         """
-        shown = shorten_model_name(model_name)
-        if dimension != self.dimension:
-            if self.model_name is not None:
-                shown_index = shorten_model_name(self.model_name)
-                raise IndexModelMismatchError(
-                    f"Embedding model {shown!r} produces {dimension}-dimensional "
-                    f"vectors, but the index was built with {shown_index!r} "
-                    f"({self.dimension} dimensions). Use --model {shown_index} "
-                    "or re-run `lecture-rag ingest` with this model."
-                )
-            raise IndexModelMismatchError(
-                f"Embedding model {shown!r} produces {dimension}-dimensional "
-                f"vectors, but the index was built with a {self.dimension}-dimensional "
-                "model. Use the model the index was built with or re-run "
-                "`lecture-rag ingest` with this model."
-            )
-
-        if self.model_name is None:
-            return None
-
-        if normalize_model_name(model_name) == normalize_model_name(self.model_name):
-            return None
-
-        shown_index = shorten_model_name(self.model_name)
-        if not allow_model_mismatch:
-            raise IndexModelMismatchError(
-                f"Embedding model {shown!r} does not match the model the index "
-                f"was built with ({shown_index!r}). Use --model {shown_index} "
-                "or re-run `lecture-rag ingest` with this model, or pass "
-                "--allow-model-mismatch to continue anyway."
-            )
-
-        logger.warning(
-            "Embedding model %r differs from the index model %r; "
-            "results may be unreliable.",
-            shown,
-            shown_index,
-        )
-        return (
-            f"Embedding model {shown!r} differs from the index model "
-            f"{shown_index!r}; results may be unreliable."
+        self.check_dimension(model_name, dimension)
+        return self.check_model_name(
+            model_name,
+            allow_model_mismatch=allow_model_mismatch,
         )
 
     def add_documents(self, documents: list[Document], embeddings: np.ndarray) -> None:
@@ -219,22 +274,70 @@ class VectorIndex:
 
         Returns:
             Loaded VectorIndex instance
+
+        Raises:
+            InvalidIndexError: If the index path or an index file is unsafe,
+                missing or invalid
         """
+        if path.is_symlink():
+            raise _invalid_error(path, "index directory is a symlink")
+
+        if not path.is_dir():
+            raise _invalid_error(
+                path,
+                "the index path is not a directory",
+            )
+
         index_path = path / "index.faiss"
         docs_path = path / "documents.json"
 
-        if not index_path.exists() or not docs_path.exists():
-            raise ValueError(f"Index files not found in {path}")
+        for file_path in (index_path, docs_path):
+            if file_path.is_symlink():
+                raise _invalid_error(file_path, f"{file_path.name} is a symlink")
 
-        faiss_index = faiss.read_index(str(index_path))
+        for file_path in (index_path, docs_path):
+            if not file_path.exists():
+                raise _invalid_error(
+                    file_path,
+                    f"missing {file_path.name}",
+                )
 
-        with open(docs_path, encoding="utf-8") as f:
-            documents = [Document.model_validate(item) for item in json.load(f)]
+        try:
+            faiss_index = faiss.read_index(str(index_path))
+        except RuntimeError as e:
+            raise _invalid_error(
+                index_path,
+                f"cannot read index.faiss ({e})",
+            ) from e
+
+        try:
+            with open(docs_path, encoding="utf-8") as f:
+                raw_documents = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            raise _invalid_error(
+                docs_path,
+                f"cannot read documents.json ({e})",
+            ) from e
+
+        if not isinstance(raw_documents, list):
+            raise _invalid_error(
+                docs_path,
+                "documents.json must contain a JSON list",
+            )
+
+        try:
+            documents = [Document.model_validate(item) for item in raw_documents]
+        except (ValidationError, TypeError) as e:
+            raise _invalid_error(
+                docs_path,
+                f"invalid document entry ({e})",
+            ) from e
 
         if len(documents) != faiss_index.ntotal:
-            raise ValueError(
-                f"Document count {len(documents)} does not match index size "
-                f"{faiss_index.ntotal} in {path}"
+            raise _invalid_error(
+                docs_path,
+                f"document count {len(documents)} does not match index size "
+                f"{faiss_index.ntotal}",
             )
 
         meta_path = path / "index_meta.json"

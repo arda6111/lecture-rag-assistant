@@ -311,12 +311,12 @@ class Retriever:
         from .embeddings import EmbeddingModel
 
         index = VectorIndex.load(index_path)
-        embedding_model = EmbeddingModel(model_name)
-        warning = index.check_model(
+        warning = index.check_model_name(
             model_name,
-            embedding_model.dimension,
             allow_model_mismatch=allow_model_mismatch,
         )
+        embedding_model = EmbeddingModel(model_name)
+        index.check_dimension(model_name, embedding_model.dimension)
         retriever = cls(embedding_model, index, mode=mode, rrf_k=rrf_k)
         retriever.model_warning = warning
         return retriever

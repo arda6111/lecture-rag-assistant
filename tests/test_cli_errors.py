@@ -1,6 +1,8 @@
 """CLI input validation and error handling tests."""
 
 import json
+import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -192,7 +194,9 @@ def test_ask_missing_index_is_reported(runner: CliRunner, tmp_path: Path) -> Non
     result = runner.invoke(main, ["ask", "What is BFS?", "--index-dir", str(empty_index)])
 
     assert_clean_failure(result)
-    assert "Index files not found" in result.output
+    assert "missing index.faiss" in result.output
+    assert "Re-run `lecture-rag ingest` to rebuild the index." in result.output
+
 
 class SmallEmbeddingModel(HashingEmbeddingModel):
     """Offline embedding model that produces 128-dimensional vectors."""
@@ -200,12 +204,12 @@ class SmallEmbeddingModel(HashingEmbeddingModel):
     dimension = 128
 
 
-def ask_args(index_dir: Path, model: str = "small") -> list[str]:
+def ask_args(index_dir: Path, model: str = "all-MiniLM-L6-v2") -> list[str]:
     """Build ask arguments against a test index."""
     return ["ask", "What is BFS?", "--index-dir", str(index_dir), "--model", model]
 
 
-def eval_args(index_dir: Path, model: str = "small") -> list[str]:
+def eval_args(index_dir: Path, model: str = "all-MiniLM-L6-v2") -> list[str]:
     """Build eval arguments against a test index."""
     return [
         "eval",
@@ -371,3 +375,195 @@ def test_corrupt_index_metadata_fails_cleanly(
     assert_clean_failure(result)
     assert "Re-run `lecture-rag ingest`" in result.output
     assert "Run `lecture-rag ingest` first" not in result.output
+
+
+class FailingEmbeddingModel:
+    """Embedding model that fails if it is constructed."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise AssertionError("embedding model must not be loaded")
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_model_name_mismatch_does_not_load_the_model(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """A model name mismatch is rejected before the embedding model is constructed."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", FailingEmbeddingModel)
+    args = (
+        ask_args(index_dir, model="other-model")
+        if command == "ask"
+        else eval_args(index_dir, model="other-model")
+    )
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "does not match the model the index was built with" in result.output
+
+
+def test_eval_output_model_name_mismatch_leaves_no_output_directory(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A rejected model leaves no output directory behind."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    out_dir = tmp_path / "out"
+    result = runner.invoke(
+        main,
+        eval_args(index_dir, model="other-model") + ["--output", str(out_dir)],
+    )
+
+    assert_clean_failure(result)
+    assert not out_dir.exists()
+
+
+def test_eval_sweep_model_name_mismatch_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """eval --sweep rejects a different model name before sweeping."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    result = runner.invoke(main, eval_args(index_dir, model="other-model") + ["--sweep"])
+
+    assert_clean_failure(result)
+    assert "does not match the model the index was built with" in result.output
+
+
+def test_dimension_mismatch_fails_cleanly_when_name_mismatch_is_allowed(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allowing a name mismatch does not bypass the dimension check."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", SmallEmbeddingModel)
+    result = runner.invoke(main, ask_args(index_dir) + ["--allow-model-mismatch"])
+
+    assert_clean_failure(result)
+    assert "128-dimensional" in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_model_name_mismatch_warning_is_printed_once(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    command: str,
+) -> None:
+    """The warning is printed once and index.py does not log a duplicate."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    args = (
+        ask_args(index_dir, model="other-model")
+        if command == "ask"
+        else eval_args(index_dir, model="other-model")
+    )
+    args.append("--allow-model-mismatch")
+
+    with caplog.at_level(logging.WARNING):
+        result = runner.invoke(main, args)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Warning:") == 1
+    assert "differs from the index model" not in caplog.text
+
+
+def test_model_name_with_a_space_is_shown_as_a_quoted_hint(
+    runner: CliRunner,
+    index_dir: Path,
+) -> None:
+    """A model name with a space is quoted when suggested as a command."""
+    metadata_path = index_dir / "index_meta.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["model_name"] = "my model"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = runner.invoke(main, ask_args(index_dir, model="other-model"))
+
+    assert_clean_failure(result)
+    assert "--model 'my model'" in result.output
+
+
+def test_long_index_model_name_is_not_shown_as_a_model_hint(
+    runner: CliRunner,
+    index_dir: Path,
+) -> None:
+    """A shortened index model name is not suggested as a runnable command."""
+    long_name = "x" * 300
+    metadata_path = index_dir / "index_meta.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["model_name"] = long_name
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = runner.invoke(main, ask_args(index_dir, model="other-model"))
+
+    assert_clean_failure(result)
+    assert "--model " not in result.output
+    assert "shortened" in result.output
+
+
+def corrupt_index_case(
+    index_dir: Path,
+    case: str,
+    temp_dir: Path,
+) -> Path:
+    """Apply one corrupt index case and return the path to query."""
+    if case == "corrupt_faiss":
+        (index_dir / "index.faiss").write_bytes(b"not a faiss index")
+        return index_dir
+    if case == "corrupt_documents":
+        (index_dir / "documents.json").write_text("{not json", encoding="utf-8")
+        return index_dir
+    if case == "empty_dir":
+        empty_dir = temp_dir / "empty_index"
+        empty_dir.mkdir()
+        return empty_dir
+    if case == "symlinked_faiss":
+        file_path = index_dir / "index.faiss"
+        target = temp_dir / "valid_index.faiss"
+        file_path.rename(target)
+        os.symlink(target, file_path)
+        return index_dir
+    if case == "symlinked_documents":
+        file_path = index_dir / "documents.json"
+        target = temp_dir / "valid_documents.json"
+        file_path.rename(target)
+        os.symlink(target, file_path)
+        return index_dir
+    if case == "symlinked_dir":
+        link_path = temp_dir / "linked_index"
+        os.symlink(index_dir, link_path)
+        return link_path
+    raise AssertionError(f"unknown case {case}")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "corrupt_faiss",
+        "corrupt_documents",
+        "empty_dir",
+        "symlinked_faiss",
+        "symlinked_documents",
+        "symlinked_dir",
+    ],
+)
+def test_ask_rejects_invalid_index_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    tmp_path: Path,
+    case: str,
+) -> None:
+    """Every invalid index case fails cleanly with the rebuild hint."""
+    query_path = corrupt_index_case(index_dir, case, tmp_path)
+
+    result = runner.invoke(main, ["ask", "What is BFS?", "--index-dir", str(query_path)])
+
+    assert_clean_failure(result)
+    assert "Re-run `lecture-rag ingest` to rebuild the index." in result.output
