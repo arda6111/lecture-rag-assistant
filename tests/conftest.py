@@ -1,9 +1,11 @@
 """Pytest configuration and fixtures."""
 
 import hashlib
+import os
 import re
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import fitz
 import numpy as np
@@ -12,6 +14,27 @@ import pytest
 from lecture_rag.models import Document
 
 TOKEN_PATTERN = re.compile(r"\w+")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_environment(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remove project environment variables and disable dotenv loading."""
+    for name in list(os.environ):
+        if name.startswith(("LECTURE_RAG_", "OPENAI_")):
+            monkeypatch.delenv(name, raising=False)
+
+    if request.node.get_closest_marker("uses_dotenv"):
+        return
+
+    def noop(*args: Any, **kwargs: Any) -> bool:
+        """Do nothing and report that no environment file was loaded."""
+        return False
+
+    monkeypatch.setattr("dotenv.load_dotenv", noop)
+    monkeypatch.setattr("lecture_rag.cli.load_dotenv", noop)
 
 
 class HashingEmbeddingModel:

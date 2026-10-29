@@ -50,6 +50,7 @@ def test_eval_help(cli_runner: CliRunner) -> None:
     assert "eval" in result.output.lower()
 
 
+@pytest.mark.uses_dotenv
 def test_cli_loads_dotenv(
     cli_runner: CliRunner,
     monkeypatch: pytest.MonkeyPatch,
@@ -67,6 +68,19 @@ def test_cli_loads_dotenv(
 
         assert result.exit_code == 0
         assert os.environ.get("LECTURE_RAG_RETRIEVAL_MODE") == "bm25"
+
+
+def test_cli_does_not_load_dotenv_by_default(cli_runner: CliRunner) -> None:
+    """The CLI ignores .env when dotenv loading is disabled."""
+    with cli_runner.isolated_filesystem():
+        Path(".env").write_text(
+            "LECTURE_RAG_RETRIEVAL_MODE=bm25\n",
+            encoding="utf-8",
+        )
+        result = cli_runner.invoke(main, ["--help"])
+
+        assert result.exit_code == 0
+        assert "LECTURE_RAG_RETRIEVAL_MODE" not in os.environ
 
 
 @pytest.mark.parametrize(
