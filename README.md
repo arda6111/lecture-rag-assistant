@@ -37,6 +37,12 @@ graph LR
 - **Retrieval**: Cosine similarity search returning top-k chunks
 - **Generation**: Provider abstraction supporting LLM or extractive modes
 
+### Retrieval Modes
+
+- **dense**: FAISS cosine similarity search over sentence-transformer embeddings.
+- **bm25**: Sparse lexical search using the rank-bm25 Okapi implementation.
+- **hybrid**: Reciprocal Rank Fusion of dense and bm25 results. Each document's score is the sum of `1 / (60 + rank)` across both ranked lists, and the top `max(4k, 20)` candidates are taken from each retriever before fusion.
+
 ## Quick Start
 
 ### Installation
@@ -126,6 +132,7 @@ Options:
 - `--model NAME`: Embedding model, must match ingest model
 - `--k INT`: Number of sources to retrieve (default: 5)
 - `--mode {llm|extractive}`: Answer generation mode (default: `extractive`)
+- `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
 
 ### Eval Command
 
@@ -138,6 +145,10 @@ Options:
 - `--index-dir PATH`: Index directory (default: `index`)
 - `--model NAME`: Embedding model
 - `--k INT`: Number of documents for metrics (default: 5)
+- `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
+- `--compare`: Evaluate and compare dense, bm25, and hybrid retrieval
+
+Set the `LECTURE_RAG_RETRIEVAL_MODE` environment variable to choose the default retrieval mode for `ask` and `eval`. The `--retrieval` option overrides the environment variable.
 
 ## Web Demo
 
@@ -161,10 +172,20 @@ Results on the included sample dataset (6 questions over 2 lecture PDFs):
 | MRR@5 | 1.000 |
 | Mean Score | 0.379 |
 
+**Retrieval mode comparison (6 questions, k=5 and k=1, measured with lecture-rag eval --compare)**
+
+| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
+|------|-------|-------|-------|-------|
+| dense | 1.000 | 1.000 | 1.000 | 1.000 |
+| bm25 | 1.000 | 1.000 | 1.000 | 1.000 |
+| hybrid | 1.000 | 1.000 | 1.000 | 1.000 |
+
+The 6-question set is too easy to separate the modes; a larger set that includes unanswerable questions is planned.
+
 **Interpretation:**
 - **Hit@5 = 1.000**: All questions found the correct source in top 5 results
 - **MRR@5 = 1.000**: Correct sources ranked first on average
-- **Mean Score = 0.845**: Strong cosine similarity between queries and relevant chunks
+- **Mean Score = 0.379**: Average cosine similarity across all top-5 results
 
 These results demonstrate that the embedding model effectively captures semantic similarity for technical CS content.
 
