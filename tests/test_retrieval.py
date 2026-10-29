@@ -257,3 +257,18 @@ def test_sample_lectures_top_result(
     assert results
     top = results[0].document
     assert (top.file_name, top.page_number) == (expected_file, expected_page)
+
+
+def test_default_retrieval_mode_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default mode comes from the environment and falls back to dense."""
+    from lecture_rag.retrieval import default_retrieval_mode
+
+    monkeypatch.delenv("LECTURE_RAG_RETRIEVAL_MODE", raising=False)
+    assert default_retrieval_mode() == "dense"
+
+    monkeypatch.setenv("LECTURE_RAG_RETRIEVAL_MODE", "Hybrid")
+    assert default_retrieval_mode() == "hybrid"
+
+    monkeypatch.setenv("LECTURE_RAG_RETRIEVAL_MODE", "foo")
+    with pytest.raises(ValueError, match="Invalid retrieval mode"):
+        default_retrieval_mode()

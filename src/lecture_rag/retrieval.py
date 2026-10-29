@@ -56,6 +56,21 @@ def parse_abstain_threshold(raw: str | None) -> float:
     return round(round(clamped / 0.05) * 0.05, 2)
 
 
+def default_retrieval_mode() -> RetrievalMode:
+    """Return the retrieval mode configured by LECTURE_RAG_RETRIEVAL_MODE.
+
+    Returns:
+        The configured mode, or "dense" when the variable is unset
+
+    Raises:
+        ValueError: If the configured mode is not supported
+    """
+    raw = os.getenv("LECTURE_RAG_RETRIEVAL_MODE")
+    if raw is None or not raw.strip():
+        return "dense"
+    return normalize_mode(raw)
+
+
 def normalize_mode(mode: str) -> RetrievalMode:
     """Validate and normalize a retrieval mode.
 
@@ -122,10 +137,7 @@ class Retriever:
         """
         self.embedding_model = embedding_model
         self.index = index
-        raw_mode = mode if mode is not None else os.getenv(
-            "LECTURE_RAG_RETRIEVAL_MODE", "dense"
-        )
-        self.mode = normalize_mode(raw_mode)
+        self.mode = normalize_mode(mode) if mode is not None else default_retrieval_mode()
         self.rrf_k = rrf_k
         self._bm25_index: BM25Index | None = None
 
@@ -254,6 +266,6 @@ class Retriever:
         """
         from .embeddings import EmbeddingModel
 
-        embedding_model = EmbeddingModel(model_name)
         index = VectorIndex.load(index_path)
+        embedding_model = EmbeddingModel(model_name)
         return cls(embedding_model, index, mode=mode, rrf_k=rrf_k)

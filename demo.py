@@ -7,7 +7,11 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag.generation import Generator
-from lecture_rag.retrieval import Retriever, parse_abstain_threshold
+from lecture_rag.retrieval import (
+    Retriever,
+    default_retrieval_mode,
+    parse_abstain_threshold,
+)
 
 load_dotenv(find_dotenv(usecwd=True))
 
@@ -35,10 +39,15 @@ index_dir = st.sidebar.text_input(
 model_name = st.sidebar.text_input("Embedding Model", value="all-MiniLM-L6-v2")
 k = st.sidebar.slider("Number of sources", min_value=1, max_value=10, value=5)
 mode = st.sidebar.selectbox("Answer Mode", options=["extractive", "llm"])
+RETRIEVAL_MODES = ["dense", "bm25", "hybrid"]
+try:
+    configured_mode = default_retrieval_mode()
+except ValueError:
+    configured_mode = "dense"
 retrieval_mode = st.sidebar.selectbox(
     "Retrieval mode",
-    options=["dense", "bm25", "hybrid"],
-    index=2,
+    options=RETRIEVAL_MODES,
+    index=RETRIEVAL_MODES.index(configured_mode),
 )
 abstain_threshold = st.sidebar.slider(
     "Abstain threshold",
