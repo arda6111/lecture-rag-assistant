@@ -46,6 +46,7 @@ def test_embedding_model_load_error_shows_one_backslash(
     assert "'dir\\model'" in message
     assert "dir\\\\model" not in message
 
+
 def test_embedding_model_dimension_error_shows_one_backslash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -61,6 +62,7 @@ def test_embedding_model_dimension_error_shows_one_backslash(
     message = str(exc_info.value)
     assert "'dir\\model'" in message
     assert "dir\\\\model" not in message
+
 
 def test_ingest_reports_embedding_model_error(
     monkeypatch: pytest.MonkeyPatch,
@@ -116,6 +118,7 @@ def test_ask_reports_embedding_model_error(
 
     assert_clean_failure(result)
     assert "Could not load embedding model 'all-MiniLM-L6-v2'" in result.output
+
 
 class NoDimensionModel:
     """Sentence-transformer stand-in that reports no embedding dimension."""

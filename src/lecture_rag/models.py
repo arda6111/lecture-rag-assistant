@@ -9,6 +9,7 @@ ScoreType = Literal["cosine", "bm25", "rrf"]
 
 class Document(BaseModel):
     """A document chunk with metadata."""
+
     text: str
     file_name: str
     page_number: int
@@ -17,6 +18,7 @@ class Document(BaseModel):
 
 class RetrievalResult(BaseModel):
     """A retrieved document with score."""
+
     document: Document
     score: float
     score_type: ScoreType = "cosine"
@@ -29,6 +31,7 @@ class RetrievalResult(BaseModel):
 
 class Answer(BaseModel):
     """An answer with supporting documents."""
+
     answer_text: str
     sources: list[RetrievalResult]
     mode: str

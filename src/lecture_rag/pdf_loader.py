@@ -105,8 +105,7 @@ def load_pdf(
     file_size = pdf_path.stat().st_size
     if file_size > max_file_size_bytes:
         raise ValueError(
-            f"PDF file too large: {pdf_path} is {file_size} bytes, "
-            f"limit is {max_file_size_mb} MB"
+            f"PDF file too large: {pdf_path} is {file_size} bytes, limit is {max_file_size_mb} MB"
         )
 
     _check_pdf_header(pdf_path)
@@ -173,9 +172,7 @@ def load_directory(
 
     max_file_size_mb, max_pages = _resolve_limits(max_file_size_mb, max_pages)
 
-    pdf_files = sorted(
-        path for path in directory.iterdir() if path.suffix.lower() == ".pdf"
-    )
+    pdf_files = sorted(path for path in directory.iterdir() if path.suffix.lower() == ".pdf")
 
     if not pdf_files:
         logger.warning(f"No PDF files found in {directory}")

@@ -132,7 +132,7 @@ def test_chunks_cover_text_without_trailing_overlap_only_chunk() -> None:
 
     assert intervals == expected_intervals
     assert intervals[-1][1] == len(text)
-    assert chunks[-1].text == text[-len(chunks[-1].text):]
+    assert chunks[-1].text == text[-len(chunks[-1].text) :]
     assert text[936:1000] not in [chunk.text for chunk in chunks]
 
     covered = set()

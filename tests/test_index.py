@@ -118,6 +118,7 @@ def test_load_rejects_document_count_mismatch(
     assert str(docs_path) in message
     assert message.endswith("Re-run `lecture-rag ingest` to rebuild the index.")
 
+
 def test_save_writes_index_metadata(
     sample_documents: list[Document],
     sample_embeddings: np.ndarray,
@@ -671,6 +672,7 @@ def test_check_model_name_omits_hint_for_shortened_model_name() -> None:
     assert "--model " not in message
     assert "shortened" in message
     assert long_name not in message
+
 
 def test_check_model_name_shows_one_backslash() -> None:
     """A model name with a backslash is shown with exactly one backslash."""

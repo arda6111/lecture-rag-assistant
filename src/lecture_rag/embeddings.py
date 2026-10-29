@@ -29,14 +29,10 @@ class EmbeddingModel:
         try:
             self.model = SentenceTransformer(model_name)
         except OSError as e:
-            raise EmbeddingModelError(
-                f"Could not load embedding model '{model_name}': {e}"
-            ) from e
+            raise EmbeddingModelError(f"Could not load embedding model '{model_name}': {e}") from e
         dimension = self.model.get_sentence_embedding_dimension()
         if dimension is None:
-            raise EmbeddingModelError(
-                f"Model '{model_name}' did not report an embedding dimension"
-            )
+            raise EmbeddingModelError(f"Model '{model_name}' did not report an embedding dimension")
         self.dimension: int = dimension
         logger.info(f"Model loaded, dimension: {self.dimension}")
 

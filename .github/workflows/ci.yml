@@ -35,6 +35,10 @@ jobs:
       - name: Lint with ruff
         run: |
           ruff check src tests demo.py scripts
+
+      - name: Check formatting with ruff
+        run: |
+          ruff format --check src tests demo.py scripts
       
       - name: Type check with mypy
         run: |

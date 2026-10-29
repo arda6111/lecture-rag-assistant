@@ -131,15 +131,16 @@ def test_run_full_evaluation_and_markdown() -> None:
     assert "/workspace" not in markdown
 
 
-def test_cli_eval_output_writes_files(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_eval_output_writes_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """eval --output writes results.json and results.md."""
     monkeypatch.setattr("lecture_rag.cli.EmbeddingModel", HashingEmbeddingModel)
     monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", HashingEmbeddingModel)
     runner = CliRunner()
     index_dir = tmp_path / "index"
-    assert runner.invoke(main, ["ingest", str(SAMPLE_DIR), "--index-dir", str(index_dir)]).exit_code == 0
+    assert (
+        runner.invoke(main, ["ingest", str(SAMPLE_DIR), "--index-dir", str(index_dir)]).exit_code
+        == 0
+    )
 
     eval_file = tmp_path / "small.json"
     eval_file.write_text(SMALL_SET.model_dump_json(), encoding="utf-8")
@@ -147,7 +148,15 @@ def test_cli_eval_output_writes_files(
 
     result = runner.invoke(
         main,
-        ["eval", "--eval-file", str(eval_file), "--index-dir", str(index_dir), "--output", str(out_dir)],
+        [
+            "eval",
+            "--eval-file",
+            str(eval_file),
+            "--index-dir",
+            str(index_dir),
+            "--output",
+            str(out_dir),
+        ],
     )
 
     assert result.exit_code == 0, result.output

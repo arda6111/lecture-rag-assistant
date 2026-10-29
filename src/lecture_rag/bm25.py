@@ -90,8 +90,4 @@ class BM25Index:
             reverse=True,
         )
 
-        return [
-            (document, float(score))
-            for document, score in ranked
-            if float(score) > 0
-        ][:k]
+        return [(document, float(score)) for document, score in ranked if float(score) > 0][:k]

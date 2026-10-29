@@ -78,7 +78,5 @@ def test_pyproject_has_test_timeout_configuration() -> None:
     data = tomllib.loads(PYPROJECT_FILE.read_text(encoding="utf-8"))
 
     dev_dependencies = data["project"]["optional-dependencies"]["dev"]
-    assert any(
-        dependency.startswith("pytest-timeout") for dependency in dev_dependencies
-    )
+    assert any(dependency.startswith("pytest-timeout") for dependency in dev_dependencies)
     assert data["tool"]["pytest"]["ini_options"]["timeout"] == 300

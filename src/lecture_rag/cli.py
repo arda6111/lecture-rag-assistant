@@ -376,13 +376,11 @@ def eval(
     if output is not None:
         if compare or sweep:
             raise click.UsageError(
-                "--output evaluates all modes and cannot be combined with "
-                "--compare or --sweep"
+                "--output evaluates all modes and cannot be combined with --compare or --sweep"
             )
         if retrieval is not None:
             click.echo(
-                "Warning: --retrieval is ignored with --output; "
-                "all retrieval modes are evaluated.",
+                "Warning: --retrieval is ignored with --output; all retrieval modes are evaluated.",
                 err=True,
             )
 
@@ -487,10 +485,7 @@ def eval(
     click.echo(f"Abstain accuracy: {metrics['abstain_accuracy']:.3f}")
     click.echo(f"Abstain precision: {metrics['abstain_precision']:.3f}")
     click.echo(f"Abstain recall: {metrics['abstain_recall']:.3f}")
-    click.echo(
-        f"Hit@{k} after abstain: "
-        f"{metrics[f'answerable_hit_at_{k}_after_abstain']:.3f}"
-    )
+    click.echo(f"Hit@{k} after abstain: {metrics[f'answerable_hit_at_{k}_after_abstain']:.3f}")
 
 
 if __name__ == "__main__":

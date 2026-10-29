@@ -6,9 +6,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EMOJI_PATTERN = re.compile(
-    "[\U0001F000-\U0001FAFF\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]"
-)
+EMOJI_PATTERN = re.compile("[\U0001f000-\U0001faff\u2300-\u23ff\u2600-\u27bf\u2b00-\u2bff\ufe0f]")
 EMOJI_SHORTCODE = re.compile(r":[a-z0-9_+-]+:")
 TEXT_FILES = sorted(
     [
@@ -50,6 +48,7 @@ def test_security_reporting_policy() -> None:
     assert "private vulnerability reporting" in text
     assert "once the repository is public" in joined
     assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text)
+
 
 def test_security_docs_warn_about_untrusted_faiss_files() -> None:
     """Both security docs tell readers to only load indexes they built."""

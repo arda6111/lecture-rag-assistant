@@ -49,9 +49,7 @@ def assert_rendered_safely(app: AppTest, text: str) -> None:
     assert any(text in value for value in element_values(app, ("code", "text")))
     assert not any(text in value for value in element_values(app, UNSAFE_ELEMENTS))
     assert not any(text in str(element.label) for element in app.expander)
-    assert not any(
-        "\\*" in value or "\\[" in value for value in all_rendered_values(app)
-    )
+    assert not any("\\*" in value or "\\[" in value for value in all_rendered_values(app))
 
 
 def build_demo_index(
@@ -216,14 +214,10 @@ def test_model_index_mismatch_shows_specific_error(
         app = run_demo()
 
         assert any(
-            "Model and index do not match." in error
-            for error in element_values(app, ("error",))
+            "Model and index do not match." in error for error in element_values(app, ("error",))
         )
         assert any("model **x**" in code for code in element_values(app, ("code",)))
-        assert not any(
-            "Failed to load index" in error
-            for error in element_values(app, ("error",))
-        )
+        assert not any("Failed to load index" in error for error in element_values(app, ("error",)))
         assert_rendered_safely(app, "model **x**")
     finally:
         streamlit.cache_resource.clear()
@@ -267,8 +261,7 @@ def test_model_warning_requires_allow_mismatch(
         app = run_demo()
 
         assert any(
-            "Model and index do not match." in error
-            for error in element_values(app, ("error",))
+            "Model and index do not match." in error for error in element_values(app, ("error",))
         )
         assert not app.warning
 
@@ -281,10 +274,7 @@ def test_model_warning_requires_allow_mismatch(
             "Results may be unreliable." in warning
             for warning in warnings
         )
-        assert any(
-            "differs from **index**" in code
-            for code in element_values(app, ("code",))
-        )
+        assert any("differs from **index**" in code for code in element_values(app, ("code",)))
         assert not app.error
         assert_rendered_safely(app, "differs from **index**")
     finally:
@@ -324,14 +314,9 @@ def test_index_metadata_error_is_shown(
     try:
         app = run_demo()
 
-        assert any(
-            "Invalid index." in error for error in element_values(app, ("error",))
-        )
+        assert any("Invalid index." in error for error in element_values(app, ("error",)))
         assert any(message in code for code in element_values(app, ("code",)))
-        assert not any(
-            "Failed to load index" in error
-            for error in element_values(app, ("error",))
-        )
+        assert not any("Failed to load index" in error for error in element_values(app, ("error",)))
     finally:
         streamlit.cache_resource.clear()
 
@@ -427,8 +412,8 @@ def test_untrusted_file_name_is_rendered_safely(
         assert not app.exception
         assert_rendered_safely(app, UNTRUSTED)
         assert any(
-            label.startswith("Source 1, page 1") for label in
-            (str(element.label) for element in app.expander)
+            label.startswith("Source 1, page 1")
+            for label in (str(element.label) for element in app.expander)
         )
     finally:
         streamlit.cache_resource.clear()
@@ -442,10 +427,7 @@ def test_invalid_index_error_is_shown(
     index_dir = tmp_path / "index"
     index_dir.mkdir()
     monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
-    message = (
-        "Invalid index at x: bad. "
-        "Re-run `lecture-rag ingest` to rebuild the index."
-    )
+    message = "Invalid index at x: bad. Re-run `lecture-rag ingest` to rebuild the index."
 
     def fake_from_index_path(
         cls: type[Retriever],
@@ -467,16 +449,12 @@ def test_invalid_index_error_is_shown(
     try:
         app = run_demo()
 
-        assert any(
-            "Invalid index." in error for error in element_values(app, ("error",))
-        )
+        assert any("Invalid index." in error for error in element_values(app, ("error",)))
         assert any(message in code for code in element_values(app, ("code",)))
-        assert not any(
-            "Failed to load index" in error
-            for error in element_values(app, ("error",))
-        )
+        assert not any("Failed to load index" in error for error in element_values(app, ("error",)))
     finally:
         streamlit.cache_resource.clear()
+
 
 def test_symlinked_index_shows_real_path_error(
     monkeypatch: pytest.MonkeyPatch,
@@ -495,8 +473,7 @@ def test_symlinked_index_shows_real_path_error(
     assert not app.exception
     assert any(
         "Invalid index: the index directory is a symlink. "
-        "Use the real (non-symlink) path of the index directory instead."
-        in error
+        "Use the real (non-symlink) path of the index directory instead." in error
         for error in errors
     )
     assert not any("Re-run" in error for error in errors)
@@ -518,8 +495,7 @@ def test_dangling_symlinked_index_shows_symlink_error(
     assert not app.exception
     assert any(
         "Invalid index: the index directory is a symlink. "
-        "Use the real (non-symlink) path of the index directory instead."
-        in error
+        "Use the real (non-symlink) path of the index directory instead." in error
         for error in errors
     )
     assert not any("Re-run" in error for error in errors)
@@ -574,12 +550,8 @@ def test_hostile_chunk_and_answer_are_rendered_only_as_text(
     tmp_path: Path,
 ) -> None:
     """Hostile chunk and answer text never reach labels or message elements."""
-    hostile_chunk = (
-        "**bold** [x](http://e.com) http://2130706433/login <script>x</script>"
-    )
-    hostile_answer = (
-        "**answer** [y](http://e.org) http://2130706433/admin <script>y</script>"
-    )
+    hostile_chunk = "**bold** [x](http://e.com) http://2130706433/login <script>x</script>"
+    hostile_answer = "**answer** [y](http://e.org) http://2130706433/admin <script>y</script>"
     index_dir = tmp_path / "index"
     model = HashingEmbeddingModel()
     documents = [

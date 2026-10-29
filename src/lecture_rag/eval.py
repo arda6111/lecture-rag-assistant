@@ -131,11 +131,7 @@ def evaluate_retrieval(
                 reciprocal_ranks.append(0.0)
 
     hit_rate = hits / answerable_total if answerable_total > 0 else 0.0
-    mrr = (
-        sum(reciprocal_ranks) / answerable_total
-        if answerable_total > 0
-        else 0.0
-    )
+    mrr = sum(reciprocal_ranks) / answerable_total if answerable_total > 0 else 0.0
     mean_score = sum(scores) / len(scores) if scores else 0.0
 
     metrics: dict[str, Any] = {
@@ -149,14 +145,10 @@ def evaluate_retrieval(
 
     if abstain_threshold is not None:
         abstain_total = abstain_true_positives + abstain_false_positives
-        unanswerable_abstained_total = (
-            abstain_true_positives + abstain_false_negatives
-        )
+        unanswerable_abstained_total = abstain_true_positives + abstain_false_negatives
 
         metrics["abstain_accuracy"] = (
-            (abstain_true_positives + abstain_true_negatives) / total
-            if total > 0
-            else 0.0
+            (abstain_true_positives + abstain_true_negatives) / total if total > 0 else 0.0
         )
         metrics["abstain_precision"] = (
             abstain_true_positives / abstain_total if abstain_total > 0 else 0.0
@@ -167,9 +159,7 @@ def evaluate_retrieval(
             else 0.0
         )
         metrics[f"answerable_hit_at_{k}_after_abstain"] = (
-            answerable_hits_after_abstain / answerable_total
-            if answerable_total > 0
-            else 0.0
+            answerable_hits_after_abstain / answerable_total if answerable_total > 0 else 0.0
         )
 
     return metrics

@@ -29,9 +29,7 @@ st.set_page_config(
 )
 
 st.title("Lecture RAG Assistant")
-st.markdown(
-    "Ask questions about lecture materials and get answers with source citations."
-)
+st.markdown("Ask questions about lecture materials and get answers with source citations.")
 
 
 @st.cache_resource
@@ -178,9 +176,7 @@ if query:
             st.subheader("Sources")
             for i, result in enumerate(answer.sources, 1):
                 doc = result.document
-                with st.expander(
-                    f"Source {i}, page {doc.page_number} ({result.score_label})"
-                ):
+                with st.expander(f"Source {i}, page {doc.page_number} ({result.score_label})"):
                     st.text(f"File: {doc.file_name}")
                     st.text(doc.text)
 

@@ -14,9 +14,7 @@ from .models import Document
 
 logger = logging.getLogger(__name__)
 
-INDEX_NOT_FOUND_MESSAGE = (
-    "Index directory not found. Run `lecture-rag ingest` to build the index."
-)
+INDEX_NOT_FOUND_MESSAGE = "Index directory not found. Run `lecture-rag ingest` to build the index."
 
 
 def normalize_model_name(name: str) -> str:
@@ -32,7 +30,7 @@ def normalize_model_name(name: str) -> str:
     normalized = name.strip()
     prefix = "sentence-transformers/"
     if normalized.lower().startswith(prefix):
-        normalized = normalized[len(prefix):]
+        normalized = normalized[len(prefix) :]
     return normalized
 
 
@@ -67,16 +65,14 @@ class IndexMetadataError(InvalidIndexError):
 def _invalid_error(path: Path, reason: str) -> InvalidIndexError:
     """Build a consistent invalid index error."""
     return InvalidIndexError(
-        f"Invalid index at {path}: {reason}. "
-        "Re-run `lecture-rag ingest` to rebuild the index."
+        f"Invalid index at {path}: {reason}. Re-run `lecture-rag ingest` to rebuild the index."
     )
 
 
 def _metadata_error(path: Path, reason: str) -> IndexMetadataError:
     """Build a consistent index metadata error."""
     return IndexMetadataError(
-        f"Invalid index at {path}: {reason}. "
-        "Re-run `lecture-rag ingest` to rebuild the index."
+        f"Invalid index at {path}: {reason}. Re-run `lecture-rag ingest` to rebuild the index."
     )
 
 
@@ -213,7 +209,9 @@ class VectorIndex:
             raise ValueError("Number of embeddings must match number of documents")
 
         if embeddings.shape[1] != self.dimension:
-            raise ValueError(f"Embedding dimension {embeddings.shape[1]} does not match index dimension {self.dimension}")
+            raise ValueError(
+                f"Embedding dimension {embeddings.shape[1]} does not match index dimension {self.dimension}"
+            )
 
         faiss.normalize_L2(embeddings)
         self.index.add(embeddings)
@@ -264,7 +262,12 @@ class VectorIndex:
         faiss.write_index(self.index, str(path / "index.faiss"))
 
         with open(path / "documents.json", "w", encoding="utf-8") as f:
-            json.dump([document.model_dump() for document in self.documents], f, ensure_ascii=False, indent=2)
+            json.dump(
+                [document.model_dump() for document in self.documents],
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
 
         with open(path / "index_meta.json", "w", encoding="utf-8") as f:
             json.dump(
@@ -299,8 +302,7 @@ class VectorIndex:
 
         if not path.exists():
             raise InvalidIndexError(
-                f"Index directory not found: {path}. "
-                "Run `lecture-rag ingest` to build the index."
+                f"Index directory not found: {path}. Run `lecture-rag ingest` to build the index."
             )
 
         if not path.is_dir():
@@ -358,8 +360,7 @@ class VectorIndex:
         if len(documents) != faiss_index.ntotal:
             raise _invalid_error(
                 docs_path,
-                f"document count {len(documents)} does not match index size "
-                f"{faiss_index.ntotal}",
+                f"document count {len(documents)} does not match index size {faiss_index.ntotal}",
             )
 
         meta_path = path / "index_meta.json"

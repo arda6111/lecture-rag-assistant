@@ -354,9 +354,7 @@ def test_prefixed_matching_model_does_not_warn(
     """A prefixed version of the ingest model matches without a warning."""
     model = "sentence-transformers/all-MiniLM-L6-v2"
     args = (
-        ask_args(index_dir, model=model)
-        if command == "ask"
-        else eval_args(index_dir, model=model)
+        ask_args(index_dir, model=model) if command == "ask" else eval_args(index_dir, model=model)
     )
 
     result = runner.invoke(main, args)
@@ -661,6 +659,7 @@ def test_value_error_fallback_has_no_ingest_first_hint(
     command: str,
 ) -> None:
     """An unexpected ValueError is reported without the generic ingest hint."""
+
     def fail_from_index_path(
         cls: type[Retriever],
         *args: object,
