@@ -120,6 +120,8 @@ Options:
 - `--model NAME`: Sentence-transformers model (default: `all-MiniLM-L6-v2`)
 - `--chunk-size INT`: Max characters per chunk (default: 512)
 - `--chunk-overlap INT`: Overlap between chunks (default: 64)
+- `--max-file-size-mb FLOAT`: Maximum PDF file size in MB (default: `LECTURE_RAG_MAX_FILE_SIZE_MB` or `50`)
+- `--max-pages INT`: Maximum number of PDF pages (default: `LECTURE_RAG_MAX_PAGES` or `500`)
 
 ### Ask Command
 
@@ -261,6 +263,9 @@ lecture-rag-assistant/
 ├── data/sample_lectures/  # Sample PDFs
 ├── eval/                  # Evaluation questions
 ├── scripts/               # Utility scripts
+├── SECURITY.md            # Security policy and vulnerability reporting
+├── .github/
+│   └── dependabot.yml     # Dependency update configuration
 └── demo.py                # Streamlit web demo
 ```
 
@@ -279,6 +284,14 @@ lecture-rag-assistant/
 - [ ] Add conversation memory for follow-up questions
 - [ ] Build web API with FastAPI
 - [ ] Add support for more document formats (PPTX, DOCX)
+
+## Security
+
+The ingest command only accepts real PDFs, verified by the `%PDF-` magic bytes. It rejects symlinks, encrypted PDFs, files over the size limit, and PDFs over the page limit.
+
+The index stores chunk metadata as `documents.json` instead of pickle. Indexes built with older versions must be rebuilt with `lecture-rag ingest`.
+
+CI runs `bandit` and `pip-audit`. Dependabot is enabled. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## License
 
