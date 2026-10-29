@@ -1,6 +1,7 @@
 """Retrieval logic for the RAG system."""
 
 import logging
+import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -19,6 +20,40 @@ RetrievalMode = Literal["dense", "bm25", "hybrid"]
 VALID_MODES: frozenset[str] = frozenset({"dense", "bm25", "hybrid"})
 
 DEFAULT_ABSTAIN_THRESHOLD = 0.35
+
+
+def parse_abstain_threshold(raw: str | None) -> float:
+    """Parse, clamp, and round an abstain threshold.
+
+    Args:
+        raw: Raw threshold value from the environment
+
+    Returns:
+        Threshold clamped to [0.0, 1.0] and rounded to the nearest 0.05
+    """
+    if raw is None or not raw.strip():
+        return DEFAULT_ABSTAIN_THRESHOLD
+
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid LECTURE_RAG_ABSTAIN_THRESHOLD=%r, using %.2f",
+            raw,
+            DEFAULT_ABSTAIN_THRESHOLD,
+        )
+        return DEFAULT_ABSTAIN_THRESHOLD
+
+    if not math.isfinite(value):
+        logger.warning(
+            "Invalid LECTURE_RAG_ABSTAIN_THRESHOLD=%r, using %.2f",
+            raw,
+            DEFAULT_ABSTAIN_THRESHOLD,
+        )
+        return DEFAULT_ABSTAIN_THRESHOLD
+
+    clamped = min(max(value, 0.0), 1.0)
+    return round(round(clamped / 0.05) * 0.05, 2)
 
 
 def normalize_mode(mode: str) -> RetrievalMode:
@@ -155,12 +190,18 @@ class Retriever:
         """
         return self.max_dense_similarity(query) < threshold
 
-    def retrieve(self, query: str, k: int = 5) -> list[RetrievalResult]:
+    def retrieve(
+        self,
+        query: str,
+        k: int = 5,
+        mode: RetrievalMode | None = None,
+    ) -> list[RetrievalResult]:
         """Retrieve the top k documents for a query.
 
         Args:
             query: Query string
             k: Number of documents to retrieve
+            mode: Optional retrieval mode that overrides the instance mode
 
         Returns:
             List of RetrievalResult objects, sorted by score descending
@@ -168,9 +209,11 @@ class Retriever:
         if k <= 0:
             return []
 
-        if self.mode == "dense":
+        active_mode = self.mode if mode is None else normalize_mode(mode)
+
+        if active_mode == "dense":
             results = self._dense_search(query, k)
-        elif self.mode == "bm25":
+        elif active_mode == "bm25":
             results = self._get_bm25_index().search(query, k)
         else:
             candidate_k = max(k * 4, 20)

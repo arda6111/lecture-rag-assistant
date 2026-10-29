@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .retrieval import Retriever
+from .retrieval import RetrievalMode, Retriever
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ def evaluate_retrieval(
     eval_set: EvalSet,
     k: int = 5,
     abstain_threshold: float | None = None,
+    mode: RetrievalMode | None = None,
 ) -> dict[str, Any]:
     """Evaluate retrieval quality and, optionally, abstention decisions.
 
@@ -61,6 +62,7 @@ def evaluate_retrieval(
         eval_set: Evaluation questions
         k: Number of documents to retrieve
         abstain_threshold: Optional dense similarity threshold for abstention
+        mode: Optional retrieval mode that overrides the retriever mode
 
     Returns:
         Dictionary of metrics
@@ -80,7 +82,10 @@ def evaluate_retrieval(
     abstain_true_negatives = 0
 
     for question in eval_set.questions:
-        results = retriever.retrieve(question.question, k=k)
+        if mode is None:
+            results = retriever.retrieve(question.question, k=k)
+        else:
+            results = retriever.retrieve(question.question, k=k, mode=mode)
 
         found_rank = None
         for rank, result in enumerate(results, 1):
