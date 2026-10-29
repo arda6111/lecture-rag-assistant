@@ -108,10 +108,23 @@ def ingest(
     default="extractive",
     help="Answer generation mode",
 )
-def ask(query: str, index_dir: Path, model: str, k: int, mode: str) -> None:
+@click.option(
+    "--retrieval",
+    type=click.Choice(["dense", "bm25", "hybrid"]),
+    default=None,
+    help="Retrieval mode (default: LECTURE_RAG_RETRIEVAL_MODE or dense)",
+)
+def ask(
+    query: str,
+    index_dir: Path,
+    model: str,
+    k: int,
+    mode: str,
+    retrieval: str | None,
+) -> None:
     """Ask a QUERY and get an answer with citations."""
     click.echo(f"Loading index from {index_dir}...")
-    retriever = Retriever.from_index_path(index_dir, model)
+    retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
 
     click.echo("Retrieving relevant documents...")
     sources = retriever.retrieve(query, k=k)
@@ -162,13 +175,45 @@ def ask(query: str, index_dir: Path, model: str, k: int, mode: str) -> None:
     default=5,
     help="Number of documents to retrieve for metrics",
 )
-def eval(eval_file: Path, index_dir: Path, model: str, k: int) -> None:
+@click.option(
+    "--retrieval",
+    type=click.Choice(["dense", "bm25", "hybrid"]),
+    default=None,
+    help="Retrieval mode (default: LECTURE_RAG_RETRIEVAL_MODE or dense)",
+)
+@click.option(
+    "--compare",
+    is_flag=True,
+    help="Compare dense, bm25, and hybrid retrieval",
+)
+def eval(
+    eval_file: Path,
+    index_dir: Path,
+    model: str,
+    k: int,
+    retrieval: str | None,
+    compare: bool,
+) -> None:
     """Run evaluation on the retrieval system."""
     click.echo(f"Loading evaluation set from {eval_file}...")
     eval_set = load_eval_set(eval_file)
 
     click.echo(f"Loading index from {index_dir}...")
-    retriever = Retriever.from_index_path(index_dir, model)
+    retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
+
+    if compare:
+        click.echo(f"Comparing retrieval modes on {len(eval_set.questions)} questions...")
+        click.echo("")
+        click.echo(f"| Mode | Hit@{k} | MRR@{k} |")
+        click.echo("|------|-------|-------|")
+        for mode_name in ["dense", "bm25", "hybrid"]:
+            retriever.set_mode(mode_name)
+            metrics = evaluate_retrieval(retriever, eval_set, k=k)
+            click.echo(
+                f"| {mode_name} | {metrics[f'hit_at_{k}']:.3f} | "
+                f"{metrics[f'mrr_at_{k}']:.3f} |"
+            )
+        return
 
     click.echo(f"Evaluating {len(eval_set.questions)} questions...")
     metrics = evaluate_retrieval(retriever, eval_set, k=k)
