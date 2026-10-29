@@ -174,3 +174,144 @@ def evaluate_retrieval(
 
     return metrics
 
+
+EVAL_MODES: tuple[RetrievalMode, ...] = ("dense", "bm25", "hybrid")
+SWEEP_THRESHOLDS: tuple[float, ...] = tuple(round(0.20 + 0.05 * step, 2) for step in range(9))
+SCORE_TYPES: dict[str, str] = {"dense": "cosine", "bm25": "bm25", "hybrid": "rrf"}
+
+
+def run_full_evaluation(
+    retriever: Retriever,
+    eval_set: EvalSet,
+    *,
+    eval_file: str,
+    k: int,
+    abstain_threshold: float,
+    model_name: str,
+    indexed_chunks: int,
+    command: str,
+) -> dict[str, Any]:
+    """Evaluate every retrieval mode at k and at 1, plus a threshold sweep.
+
+    Args:
+        retriever: Retriever to evaluate
+        eval_set: Evaluation questions
+        eval_file: Eval file path as given on the command line
+        k: Number of documents to retrieve
+        abstain_threshold: Dense similarity threshold for abstention
+        model_name: Embedding model name
+        indexed_chunks: Number of chunks in the index
+        command: Command that produced the results
+
+    Returns:
+        JSON-serializable results without timestamps or absolute paths
+    """
+    modes: dict[str, dict[str, Any]] = {}
+    for mode in EVAL_MODES:
+        at_k = evaluate_retrieval(
+            retriever, eval_set, k=k, abstain_threshold=abstain_threshold, mode=mode
+        )
+        at_1 = evaluate_retrieval(
+            retriever, eval_set, k=1, abstain_threshold=abstain_threshold, mode=mode
+        )
+        modes[mode] = {
+            "score_type": SCORE_TYPES[mode],
+            "hit_at_k": at_k[f"hit_at_{k}"],
+            "mrr_at_k": at_k[f"mrr_at_{k}"],
+            "hit_at_1": at_1["hit_at_1"],
+            "mrr_at_1": at_1["mrr_at_1"],
+            "abstain_accuracy": at_k["abstain_accuracy"],
+            "abstain_precision": at_k["abstain_precision"],
+            "abstain_recall": at_k["abstain_recall"],
+            "hit_at_k_after_abstain": at_k[f"answerable_hit_at_{k}_after_abstain"],
+            "mean_score": at_k["mean_score"],
+        }
+
+    sweep = [
+        {
+            "threshold": threshold,
+            "abstain_accuracy": evaluate_retrieval(
+                retriever, eval_set, k=k, abstain_threshold=threshold, mode="dense"
+            )["abstain_accuracy"],
+        }
+        for threshold in SWEEP_THRESHOLDS
+    ]
+
+    answerable = sum(1 for question in eval_set.questions if question.answerable)
+    return {
+        "command": command,
+        "eval_file": eval_file,
+        "k": k,
+        "abstain_threshold": abstain_threshold,
+        "embedding_model": model_name,
+        "indexed_chunks": indexed_chunks,
+        "questions": {
+            "total": len(eval_set.questions),
+            "answerable": answerable,
+            "unanswerable": len(eval_set.questions) - answerable,
+        },
+        "modes": modes,
+        "sweep": sweep,
+    }
+
+
+def render_markdown(results: dict[str, Any]) -> str:
+    """Render full evaluation results as Markdown tables.
+
+    Args:
+        results: Output of run_full_evaluation
+
+    Returns:
+        Markdown text ending with a newline
+    """
+    k = results["k"]
+    threshold = results["abstain_threshold"]
+    questions = results["questions"]
+    lines = [
+        "# Evaluation results",
+        "",
+        f"Produced with `{results['command']}`.",
+        "",
+        f"- Eval file: `{results['eval_file']}`",
+        f"- Questions: {questions['total']} ({questions['answerable']} answerable, "
+        f"{questions['unanswerable']} unanswerable)",
+        f"- Embedding model: `{results['embedding_model']}`",
+        f"- Indexed chunks: {results['indexed_chunks']}",
+        f"- Abstain threshold: {threshold:.2f} (dense cosine similarity)",
+        "",
+        "Hit and MRR are computed over answerable questions; abstain accuracy over all questions.",
+        "",
+        "## Retrieval mode comparison",
+        "",
+        f"| Mode | Hit@{k} | MRR@{k} | Hit@1 | MRR@1 | Abstain acc |",
+        "|------|-------|-------|-------|-------|-------------|",
+    ]
+    for mode, metrics in results["modes"].items():
+        lines.append(
+            f"| {mode} | {metrics['hit_at_k']:.3f} | {metrics['mrr_at_k']:.3f} | "
+            f"{metrics['hit_at_1']:.3f} | {metrics['mrr_at_1']:.3f} | "
+            f"{metrics['abstain_accuracy']:.3f} |"
+        )
+
+    dense = results["modes"]["dense"]
+    lines += [
+        "",
+        f"## Abstention at threshold {threshold:.2f} (dense)",
+        "",
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Abstain accuracy | {dense['abstain_accuracy']:.3f} |",
+        f"| Abstain precision | {dense['abstain_precision']:.3f} |",
+        f"| Abstain recall | {dense['abstain_recall']:.3f} |",
+        f"| Hit@{k} after abstain | {dense['hit_at_k_after_abstain']:.3f} |",
+        f"| Mean cosine score (top {k}) | {dense['mean_score']:.3f} |",
+        "",
+        "## Threshold sweep (dense)",
+        "",
+        "| Threshold | Abstain acc |",
+        "|-----------|-------------|",
+    ]
+    for row in results["sweep"]:
+        lines.append(f"| {row['threshold']:.2f} | {row['abstain_accuracy']:.3f} |")
+
+    return "\n".join(lines) + "\n"

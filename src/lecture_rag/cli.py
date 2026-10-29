@@ -1,5 +1,6 @@
 """Command-line interface for the RAG system."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -9,7 +10,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from .chunking import chunk_documents
 from .embeddings import EmbeddingModel
-from .eval import evaluate_retrieval, load_eval_set
+from .eval import evaluate_retrieval, load_eval_set, render_markdown, run_full_evaluation
 from .generation import Generator
 from .index import VectorIndex
 from .pdf_loader import load_directory
@@ -280,6 +281,12 @@ def ask(
     show_default=True,
     help="Minimum dense similarity required to answer",
 )
+@click.option(
+    "--output",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Write results.json and results.md for all modes to this directory",
+)
 def eval(
     eval_file: Path,
     index_dir: Path,
@@ -289,6 +296,7 @@ def eval(
     compare: bool,
     sweep: bool,
     abstain_threshold: float,
+    output: Path | None,
 ) -> None:
     """Run evaluation on the retrieval system."""
     click.echo(f"Loading evaluation set from {eval_file}...")
@@ -302,6 +310,32 @@ def eval(
 
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval)
+
+    if output is not None:
+        command = (
+            f"lecture-rag eval --eval-file {eval_file.as_posix()} --k {k} "
+            f"--abstain-threshold {abstain_threshold:.2f} --output {output.as_posix()}"
+        )
+        click.echo(f"Evaluating all modes on {len(eval_set.questions)} questions...")
+        results = run_full_evaluation(
+            retriever,
+            eval_set,
+            eval_file=eval_file.as_posix(),
+            k=k,
+            abstain_threshold=abstain_threshold,
+            model_name=model,
+            indexed_chunks=len(retriever.index.documents),
+            command=command,
+        )
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "results.json").write_text(
+            json.dumps(results, indent=2) + "\n", encoding="utf-8"
+        )
+        markdown = render_markdown(results)
+        (output / "results.md").write_text(markdown, encoding="utf-8")
+        click.echo(markdown)
+        click.echo(f"Wrote {output / 'results.json'} and {output / 'results.md'}")
+        return
 
     if sweep:
         click.echo(f"Sweeping abstain thresholds on {len(eval_set.questions)} questions...")
