@@ -34,7 +34,9 @@ class EmbeddingModel:
             ) from e
         dimension = self.model.get_sentence_embedding_dimension()
         if dimension is None:
-            raise ValueError(f"Model {model_name!r} did not report an embedding dimension")
+            raise EmbeddingModelError(
+                f"Model {model_name!r} did not report an embedding dimension"
+            )
         self.dimension: int = dimension
         logger.info(f"Model loaded, dimension: {self.dimension}")
 
