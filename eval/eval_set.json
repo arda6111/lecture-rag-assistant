@@ -1,0 +1,34 @@
+{
+  "questions": [
+    {
+      "question": "What is the maximum number of nodes at level k in a binary tree?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What are the common collision resolution strategies for hash tables?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "What is the recommended load factor range for hash tables?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "What are the key principles of dynamic programming?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What is the time complexity of BFS and DFS algorithms?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "What data structure does BFS use for traversal?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    }
+  ]
+}
