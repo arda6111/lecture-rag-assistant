@@ -34,6 +34,11 @@ def test_every_job_has_a_timeout() -> None:
         assert "timeout-minutes:" in block
 
 
+def test_ci_runs_on_macos() -> None:
+    """At least one CI job runs on macOS."""
+    assert "runs-on: macos-latest" in CI_FILE.read_text(encoding="utf-8")
+
+
 def test_mypy_covers_demo_and_scripts() -> None:
     """CI type checks the package, the demo and the scripts."""
     assert "mypy src demo.py scripts" in CI_FILE.read_text(encoding="utf-8")
