@@ -13,7 +13,13 @@ from .eval import evaluate_retrieval, load_eval_set
 from .generation import Generator
 from .index import VectorIndex
 from .pdf_loader import load_directory
-from .retrieval import Retriever, parse_abstain_threshold
+from .retrieval import (
+    RetrievalMode,
+    Retriever,
+    default_retrieval_mode,
+    normalize_mode,
+    parse_abstain_threshold,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,6 +28,23 @@ logger = logging.getLogger(__name__)
 def _default_abstain_threshold() -> float:
     """Read the default abstain threshold from the environment."""
     return parse_abstain_threshold(os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD"))
+
+
+def _resolve_retrieval_mode(retrieval: str | None) -> RetrievalMode:
+    """Resolve the retrieval mode from the CLI option or the environment."""
+    try:
+        return normalize_mode(retrieval) if retrieval else default_retrieval_mode()
+    except ValueError as e:
+        raise click.ClickException(f"{e} (check LECTURE_RAG_RETRIEVAL_MODE)") from e
+
+
+def _load_retriever(index_dir: Path, model: str, retrieval: str | None) -> Retriever:
+    """Validate the retrieval mode, then load the retriever."""
+    mode = _resolve_retrieval_mode(retrieval)
+    try:
+        return Retriever.from_index_path(index_dir, model, mode=mode)
+    except ValueError as e:
+        raise click.ClickException(f"{e}. Run `lecture-rag ingest` first.") from e
 
 
 class DotenvGroup(click.Group):
@@ -53,13 +76,13 @@ def main() -> None:
 )
 @click.option(
     "--chunk-size",
-    type=int,
+    type=click.IntRange(min=1),
     default=512,
     help="Maximum chunk size in characters",
 )
 @click.option(
     "--chunk-overlap",
-    type=int,
+    type=click.IntRange(min=0),
     default=64,
     help="Overlap between chunks in characters",
 )
@@ -85,6 +108,12 @@ def ingest(
     max_pages: int | None,
 ) -> None:
     """Ingest PDF files from INPUT_DIR and build the index."""
+    if chunk_overlap >= chunk_size:
+        raise click.BadParameter(
+            f"must be smaller than --chunk-size ({chunk_size})",
+            param_hint="--chunk-overlap",
+        )
+
     click.echo(f"Loading PDFs from {input_dir}...")
     documents = load_directory(
         input_dir,
@@ -93,8 +122,7 @@ def ingest(
     )
 
     if not documents:
-        click.echo("No documents loaded. Exiting.")
-        return
+        raise click.ClickException(f"No PDF documents could be loaded from {input_dir}")
 
     click.echo(f"Chunking {len(documents)} documents...")
     chunks = chunk_documents(documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -131,7 +159,7 @@ def ingest(
 )
 @click.option(
     "--k",
-    type=int,
+    type=click.IntRange(min=1),
     default=5,
     help="Number of documents to retrieve",
 )
@@ -149,7 +177,7 @@ def ingest(
 )
 @click.option(
     "--abstain-threshold",
-    type=float,
+    type=click.FloatRange(0.0, 1.0),
     default=_default_abstain_threshold,
     show_default=True,
     help="Minimum dense similarity required to answer",
@@ -164,8 +192,13 @@ def ask(
     abstain_threshold: float,
 ) -> None:
     """Ask a QUERY and get an answer with citations."""
+    try:
+        generator = Generator.from_config(mode=mode)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
     click.echo(f"Loading index from {index_dir}...")
-    retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
+    retriever = _load_retriever(index_dir, model, retrieval)
 
     if retriever.should_abstain(query, abstain_threshold):
         click.echo("The lecture materials do not seem to cover this question.")
@@ -179,8 +212,10 @@ def ask(
         return
 
     click.echo(f"\nGenerating answer (mode: {mode})...")
-    generator = Generator.from_config(mode=mode)
-    answer = generator.generate_answer(query, sources)
+    try:
+        answer = generator.generate_answer(query, sources)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
 
     click.echo("\n" + "=" * 80)
     click.echo("ANSWER:")
@@ -216,7 +251,7 @@ def ask(
 )
 @click.option(
     "--k",
-    type=int,
+    type=click.IntRange(min=1),
     default=5,
     help="Number of documents to retrieve for metrics",
 )
@@ -238,7 +273,7 @@ def ask(
 )
 @click.option(
     "--abstain-threshold",
-    type=float,
+    type=click.FloatRange(0.0, 1.0),
     default=_default_abstain_threshold,
     show_default=True,
     help="Minimum dense similarity required to answer",
@@ -255,10 +290,16 @@ def eval(
 ) -> None:
     """Run evaluation on the retrieval system."""
     click.echo(f"Loading evaluation set from {eval_file}...")
-    eval_set = load_eval_set(eval_file)
+    try:
+        eval_set = load_eval_set(eval_file)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    if not eval_set.questions:
+        raise click.ClickException(f"Eval set is empty: {eval_file}")
 
     click.echo(f"Loading index from {index_dir}...")
-    retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
+    retriever = _load_retriever(index_dir, model, retrieval)
 
     if sweep:
         click.echo(f"Sweeping abstain thresholds on {len(eval_set.questions)} questions...")
