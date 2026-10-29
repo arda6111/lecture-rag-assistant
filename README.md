@@ -2,6 +2,10 @@
 
 A Retrieval-Augmented Generation (RAG) system for university lecture materials. Ask questions about your lecture PDFs and get accurate answers with source citations.
 
+![Streamlit demo answering a question with cited sources](docs/demo.png)
+
+*Hybrid retrieval answering "Which traversal would you use to order tasks with dependencies?" from the sample lectures, with page-level sources.*
+
 ## Why This Project?
 
 As a Computer Science student at KIT Karlsruhe, I often need to search through large collections of lecture materials to find specific information. This tool demonstrates practical application of modern NLP techniques while solving a real student workflow problem.
@@ -179,6 +183,23 @@ streamlit run demo.py
 
 Navigate to http://localhost:8501 in your browser.
 
+The sidebar controls the retrieval mode (dense, bm25, or hybrid), the abstain threshold, the number of sources to retrieve, and the answer mode (extractive or llm). It also lets you set the index directory; the `LECTURE_RAG_INDEX_DIR` environment variable sets its default value (falling back to `index`).
+
+To regenerate the screenshot in this README:
+
+```bash
+streamlit run demo.py --server.headless true
+```
+
+Then, in a second terminal:
+
+```bash
+pip install playwright && playwright install chromium
+python scripts/capture_demo_screenshot.py
+```
+
+This writes `docs/demo.png`.
+
 ## Evaluation Results
 
 **Eval set:** 33 questions in `eval/eval_set.json` (25 answerable spread over all 4 pages, many paraphrased; 8 unanswerable off-topic questions). Hit@k and MRR are computed over the 25 answerable questions; abstain accuracy over all 33.
@@ -261,6 +282,7 @@ lecture-rag-assistant/
 │   └── cli.py             # Command-line interface
 ├── tests/                 # Pytest test suite
 ├── data/sample_lectures/  # Sample PDFs
+├── docs/                  # README screenshot (demo.png)
 ├── eval/                  # Evaluation questions
 ├── scripts/               # Utility scripts
 ├── SECURITY.md            # Security policy and vulnerability reporting
