@@ -29,6 +29,9 @@ Include the affected version, steps to reproduce, and the impact you expect.
   only an owner password).
 - Index metadata is stored as JSON instead of pickle, so loading an index never
   unpickles data.
+- Only load indexes you built yourself. `index.faiss` is a native binary format
+  parsed by FAISS, and a crafted file can be unsafe. The loader rejects symlinks
+  and invalid files, but it cannot make untrusted FAISS files safe.
 - CI runs `bandit` for static security analysis and `pip-audit` against the
   installed environment.
 - Dependabot checks for dependency and GitHub Actions updates weekly.

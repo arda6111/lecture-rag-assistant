@@ -334,6 +334,8 @@ The ingest command only accepts real PDFs, verified by the `%PDF-` magic bytes. 
 
 The index stores chunk metadata as `documents.json` instead of pickle. Indexes built with older versions must be rebuilt with `lecture-rag ingest`.
 
+Only load indexes you built yourself. `index.faiss` is a native binary format parsed by FAISS, and a crafted file can be unsafe. The loader rejects symlinks and invalid files, but it cannot make untrusted FAISS files safe.
+
 CI runs `bandit` and `pip-audit`. Dependabot is enabled. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## License

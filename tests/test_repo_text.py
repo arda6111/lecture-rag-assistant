@@ -50,3 +50,10 @@ def test_security_reporting_policy() -> None:
     assert "private vulnerability reporting" in text
     assert "once the repository is public" in joined
     assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text)
+
+def test_security_docs_warn_about_untrusted_faiss_files() -> None:
+    """Both security docs tell readers to only load indexes they built."""
+    phrase = "only load indexes you built yourself"
+    for name in ("SECURITY.md", "README.md"):
+        text = (REPO_ROOT / name).read_text(encoding="utf-8").lower()
+        assert phrase in text
