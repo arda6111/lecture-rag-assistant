@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.lecture_rag.pdf_loader import load_directory, load_pdf
+from lecture_rag.pdf_loader import load_directory, load_pdf
 
 
 def test_load_pdf(sample_pdf: Path) -> None:

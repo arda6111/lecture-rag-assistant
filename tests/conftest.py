@@ -7,7 +7,7 @@ import fitz
 import numpy as np
 import pytest
 
-from src.lecture_rag.models import Document
+from lecture_rag.models import Document
 
 
 @pytest.fixture

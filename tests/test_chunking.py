@@ -1,7 +1,7 @@
 """Tests for text chunking functionality."""
 
-from src.lecture_rag.chunking import chunk_documents
-from src.lecture_rag.models import Document
+from lecture_rag.chunking import chunk_documents
+from lecture_rag.models import Document
 
 
 def test_chunk_short_document() -> None:

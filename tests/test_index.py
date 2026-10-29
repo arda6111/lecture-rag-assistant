@@ -4,8 +4,8 @@
 import numpy as np
 import pytest
 
-from src.lecture_rag.index import VectorIndex
-from src.lecture_rag.models import Document
+from lecture_rag.index import VectorIndex
+from lecture_rag.models import Document
 
 
 def test_create_index() -> None:

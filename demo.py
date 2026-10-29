@@ -4,8 +4,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.lecture_rag.generation import Generator
-from src.lecture_rag.retrieval import Retriever
+from lecture_rag.generation import Generator
+from lecture_rag.retrieval import Retriever
 
 st.set_page_config(
     page_title="Lecture RAG Assistant",

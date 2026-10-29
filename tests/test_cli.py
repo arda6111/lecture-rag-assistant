@@ -4,7 +4,7 @@
 import pytest
 from click.testing import CliRunner
 
-from src.lecture_rag.cli import main
+from lecture_rag.cli import main
 
 
 @pytest.fixture

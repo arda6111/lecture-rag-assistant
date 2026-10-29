@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.lecture_rag.generation import ExtractiveFallbackProvider, Generator
-from src.lecture_rag.models import Document, RetrievalResult
+from lecture_rag.generation import ExtractiveFallbackProvider, Generator
+from lecture_rag.models import Document, RetrievalResult
 
 
 @pytest.fixture
