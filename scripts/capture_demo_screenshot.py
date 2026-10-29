@@ -2,7 +2,7 @@
 
 This script needs Playwright and its Chromium browser:
 
-    pip install playwright
+    pip install -e ".[demo,screenshot]"
     playwright install chromium
 """
 

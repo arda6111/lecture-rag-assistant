@@ -207,7 +207,8 @@ streamlit run demo.py --server.headless true
 Then, in a second terminal:
 
 ```bash
-pip install playwright && playwright install chromium
+pip install -e ".[demo,screenshot]"
+playwright install chromium
 python scripts/capture_demo_screenshot.py
 ```
 
@@ -269,6 +270,8 @@ Run the test suite:
 pip install -e ".[dev]"
 pytest
 ```
+
+`mypy src` is run in CI.
 
 The tests cover PDF loading and ingest limits, chunking, the FAISS and BM25 indexes, the three retrieval modes and RRF, abstention and eval metrics, answer generation, and the CLI (including an ingest and ask run on the sample PDFs and input validation errors).
 

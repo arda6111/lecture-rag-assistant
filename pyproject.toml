@@ -35,6 +35,9 @@ dev = [
 demo = [
     "streamlit>=1.28.0",
 ]
+screenshot = [
+    "playwright>=1.40",
+]
 
 [project.scripts]
 lecture-rag = "lecture_rag.cli:main"
