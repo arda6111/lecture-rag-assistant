@@ -17,11 +17,10 @@ load_dotenv(find_dotenv(usecwd=True))
 
 st.set_page_config(
     page_title="Lecture RAG Assistant",
-    page_icon="📚",
     layout="wide",
 )
 
-st.title("📚 Lecture RAG Assistant")
+st.title("Lecture RAG Assistant")
 st.markdown(
     "Ask questions about lecture materials and get answers with source citations."
 )
@@ -63,7 +62,7 @@ if not Path(index_dir).exists():
 
 try:
     retriever = load_retriever(index_dir, model_name)
-    st.sidebar.success(f"✓ Loaded index with {len(retriever.index.documents)} documents")
+    st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
 except Exception as e:
     st.error(f"Failed to load index: {e}")
     st.stop()

@@ -142,7 +142,7 @@ def ingest(
     click.echo(f"Saving index to {index_dir}...")
     vector_index.save(index_dir)
 
-    click.echo(f"✓ Indexed {len(chunks)} chunks from {len(documents)} documents")
+    click.echo(f"Indexed {len(chunks)} chunks from {len(documents)} documents")
 
 
 @main.command()
