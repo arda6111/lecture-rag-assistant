@@ -117,7 +117,7 @@ OPENAI_MODEL=gpt-3.5-turbo
 - Local Ollama (base URL: http://localhost:11434/v1)
 - Any OpenAI-compatible API
 
-LLM mode needs `OPENAI_API_KEY`, unless `OPENAI_BASE_URL` points at a local server such as Ollama. Without either, `--mode llm` stops with an error before making any request.
+LLM mode needs `OPENAI_API_KEY`, unless `OPENAI_BASE_URL` points at a local server on localhost or 127.0.0.1 such as Ollama. Without either, `--mode llm` stops with an error before making any request.
 
 **Extractive mode works offline without any API configuration** (the embedding model is downloaded once on first use).
 
@@ -271,7 +271,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`mypy src` is run in CI.
+`mypy src demo.py scripts` is run in CI.
 
 The tests cover PDF loading and ingest limits, chunking, the FAISS and BM25 indexes, the three retrieval modes and RRF, abstention and eval metrics, answer generation, and the CLI (including an ingest and ask run on the sample PDFs and input validation errors).
 

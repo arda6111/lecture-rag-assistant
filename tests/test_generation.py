@@ -2,7 +2,12 @@
 
 import pytest
 
-from lecture_rag.generation import ExtractiveFallbackProvider, Generator
+from lecture_rag.generation import (
+    ExtractiveFallbackProvider,
+    Generator,
+    OpenAICompatibleProvider,
+    is_local_base_url,
+)
 from lecture_rag.models import Document, RetrievalResult
 
 
@@ -98,3 +103,55 @@ def test_unknown_generation_mode_raises() -> None:
     """Unknown generation modes are rejected."""
     with pytest.raises(ValueError, match="Unknown generation mode"):
         Generator.from_config(mode="magic")
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (None, False),
+        ("", False),
+        ("http://localhost:11434/v1", True),
+        ("http://LOCALHOST:11434/v1", True),
+        ("http://127.0.0.1:8000/v1", True),
+        ("http://[::1]:8000/v1", True),
+        ("https://api.deepseek.com/v1", False),
+        ("http://localhost.example.com/v1", False),
+        ("not a url", False),
+    ],
+)
+def test_is_local_base_url(url: str | None, expected: bool) -> None:
+    """Only localhost, 127.0.0.1 and ::1 count as local hosts."""
+    assert is_local_base_url(url) is expected
+
+
+def test_remote_base_url_without_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A remote base URL still requires an API key."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        Generator.from_config(mode="llm")
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://localhost:11434/v1", "http://127.0.0.1:8000/v1"],
+)
+def test_local_base_urls_work_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
+) -> None:
+    """Local servers on localhost or 127.0.0.1 need no API key."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    provider = OpenAICompatibleProvider(base_url=base_url)
+
+    assert provider.client is not None
+
+
+def test_lookalike_local_host_without_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hostname that merely starts with localhost is not local."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        OpenAICompatibleProvider(base_url="http://localhost.example.com/v1")

@@ -3,12 +3,38 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from urllib.parse import urlparse
 
 from openai import OpenAI
 
 from .models import Answer, RetrievalResult
 
 logger = logging.getLogger(__name__)
+
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_local_base_url(url: str | None) -> bool:
+    """Return True when a base URL points at a local host.
+
+    Args:
+        url: Base URL to inspect
+
+    Returns:
+        True only for localhost, 127.0.0.1 and ::1 hosts
+    """
+    if not url:
+        return False
+
+    try:
+        hostname = urlparse(url).hostname
+    except ValueError:
+        return False
+
+    if hostname is None:
+        return False
+
+    return hostname.lower() in LOCAL_HOSTS
 
 
 class GenerationProvider(ABC):
@@ -40,12 +66,12 @@ class OpenAICompatibleProvider(GenerationProvider):
         resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL") or None
 
         if not resolved_key:
-            if not resolved_base_url:
+            if not is_local_base_url(resolved_base_url):
                 raise ValueError(
                     "OPENAI_API_KEY is not set. Set it in .env, point OPENAI_BASE_URL "
-                    "at a local OpenAI-compatible server, or use extractive mode."
+                    "at a local server on localhost or 127.0.0.1, or use extractive mode."
                 )
-            # Local OpenAI-compatible servers such as Ollama do not check the key.
+            # Only localhost/127.0.0.1 servers skip the key.
             resolved_key = "not-needed"
 
         self.model = model
