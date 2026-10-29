@@ -6,9 +6,9 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 | Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
 |------|-------|-------|-------|-------|
-| dense | 0.938 | 0.775 | 0.646 | 0.646 |
-| bm25 | 0.979 | 0.841 | 0.750 | 0.750 |
-| hybrid | 0.958 | 0.830 | 0.729 | 0.729 |
+| dense | 0.917 | 0.754 | 0.625 | 0.625 |
+| bm25 | 0.958 | 0.837 | 0.750 | 0.750 |
+| hybrid | 0.938 | 0.819 | 0.729 | 0.729 |
 
 #### Abstention at threshold 0.35 (dense)
 
@@ -17,7 +17,7 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 | Abstain accuracy | 0.966 |
 | Abstain precision | 1.000 |
 | Abstain recall | 0.800 |
-| Hit@5 after abstain | 0.938 |
+| Hit@5 after abstain | 0.917 |
 
 #### Threshold sweep (dense)
 
@@ -37,6 +37,6 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 | Chunk size | Chunks | Hit@5 | MRR@5 | Abstain acc |
 |------------|--------|-------|-------|-------------|
-| 256 | 1895 | 0.938 | 0.785 | 0.948 |
-| 512 | 861 | 0.938 | 0.775 | 0.966 |
-| 1024 | 450 | 0.917 | 0.734 | 0.966 |
+| 256 | 1895 | 0.917 | 0.774 | 0.948 |
+| 512 | 861 | 0.917 | 0.754 | 0.966 |
+| 1024 | 450 | 0.896 | 0.727 | 0.966 |

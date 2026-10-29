@@ -155,7 +155,6 @@
       "question": "How is the temporal difference defined in TD learning?",
       "expected_file": "rl-tutorial-2304.00803v1.pdf",
       "expected_pages": [
-        14,
         15
       ]
     },
