@@ -3,6 +3,7 @@
 import shutil
 from pathlib import Path
 
+import fitz
 import numpy as np
 import pytest
 
@@ -90,3 +91,21 @@ def test_index_round_trip(
     assert loaded_index.dimension == index.dimension
     assert loaded_index.documents == sample_documents
     assert all(isinstance(document, Document) for document in loaded_index.documents)
+
+
+def test_encrypted_pdf_rejected(temp_dir: Path) -> None:
+    """Encrypted PDFs are rejected with a clear message."""
+    pdf_path = temp_dir / "encrypted.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), "Secret lecture content.", fontsize=12)
+    doc.save(
+        str(pdf_path),
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        owner_pw="owner",
+        user_pw="user",
+    )
+    doc.close()
+
+    with pytest.raises(ValueError, match="encrypted"):
+        load_pdf(pdf_path)

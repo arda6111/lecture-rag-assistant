@@ -1,5 +1,7 @@
 """Pytest configuration and fixtures."""
 
+import hashlib
+import re
 import tempfile
 from pathlib import Path
 
@@ -8,6 +10,43 @@ import numpy as np
 import pytest
 
 from lecture_rag.models import Document
+
+TOKEN_PATTERN = re.compile(r"\w+")
+
+
+class HashingEmbeddingModel:
+    """Deterministic offline embedding model for tests."""
+
+    dimension = 384
+
+    def __init__(self, model_name: str = "hashing") -> None:
+        self.model_name = model_name
+
+    def _embed(self, text: str) -> np.ndarray:
+        vector = np.zeros(self.dimension, dtype=np.float32)
+        for token in TOKEN_PATTERN.findall(text.lower()):
+            digest = hashlib.md5(token.encode("utf-8")).digest()
+            bucket = int.from_bytes(digest[:8], "big") % self.dimension
+            vector[bucket] += 1.0
+
+        norm = np.linalg.norm(vector)
+        if norm > 0:
+            vector /= norm
+        return vector
+
+    def embed_texts(
+        self,
+        texts: list[str],
+        show_progress: bool = True,
+    ) -> np.ndarray:
+        """Generate embeddings for a list of texts."""
+        if not texts:
+            return np.zeros((0, self.dimension), dtype=np.float32)
+        return np.vstack([self._embed(text) for text in texts]).astype(np.float32)
+
+    def embed_query(self, query: str) -> np.ndarray:
+        """Generate an embedding for a single query."""
+        return self._embed(query)
 
 
 @pytest.fixture
