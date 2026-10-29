@@ -27,7 +27,7 @@ jobs:
       
       - name: Lint with ruff
         run: |
-          ruff check src tests
+          ruff check src tests demo.py scripts
       
       - name: Run tests
         run: |
