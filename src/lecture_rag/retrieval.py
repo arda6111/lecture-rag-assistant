@@ -161,6 +161,7 @@ class Retriever:
         self.index = index
         self.mode = normalize_mode(mode) if mode is not None else default_retrieval_mode()
         self.rrf_k = rrf_k
+        self.model_warning: str | None = None
         self._bm25_index: BM25Index | None = None
 
     def set_mode(self, mode: RetrievalMode) -> None:
@@ -292,6 +293,7 @@ class Retriever:
         model_name: str = "all-MiniLM-L6-v2",
         mode: RetrievalMode | None = None,
         rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
     ) -> "Retriever":
         """Load a retriever from a saved index.
 
@@ -300,6 +302,8 @@ class Retriever:
             model_name: Name of the embedding model to use
             mode: Retrieval mode, defaults to LECTURE_RAG_RETRIEVAL_MODE or dense
             rrf_k: Reciprocal rank fusion constant
+            allow_model_mismatch: Continue with a warning when the model name
+                differs from the model the index was built with
 
         Returns:
             Initialized Retriever instance
@@ -308,5 +312,11 @@ class Retriever:
 
         index = VectorIndex.load(index_path)
         embedding_model = EmbeddingModel(model_name)
-        index.check_model(model_name, embedding_model.dimension)
-        return cls(embedding_model, index, mode=mode, rrf_k=rrf_k)
+        warning = index.check_model(
+            model_name,
+            embedding_model.dimension,
+            allow_model_mismatch=allow_model_mismatch,
+        )
+        retriever = cls(embedding_model, index, mode=mode, rrf_k=rrf_k)
+        retriever.model_warning = warning
+        return retriever

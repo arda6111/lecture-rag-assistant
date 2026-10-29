@@ -12,8 +12,53 @@ from .models import Document
 logger = logging.getLogger(__name__)
 
 
+def normalize_model_name(name: str) -> str:
+    """Normalize an embedding model name for comparison.
+
+    Args:
+        name: Embedding model name
+
+    Returns:
+        The name without surrounding whitespace or a leading
+        ``sentence-transformers/`` prefix
+    """
+    normalized = name.strip()
+    prefix = "sentence-transformers/"
+    if normalized.lower().startswith(prefix):
+        normalized = normalized[len(prefix):]
+    return normalized
+
+
+def shorten_model_name(name: str, limit: int = 200) -> str:
+    """Shorten a model name for display in messages.
+
+    Args:
+        name: Embedding model name
+        limit: Maximum length of the returned name
+
+    Returns:
+        The unchanged name when it fits, otherwise a truncated name ending
+        in ``...``
+    """
+    if len(name) <= limit:
+        return name
+    return name[: limit - 3] + "..."
+
+
 class IndexModelMismatchError(RuntimeError):
     """Raised when an embedding model does not match the index."""
+
+
+class IndexMetadataError(ValueError):
+    """Raised when index metadata is missing or invalid."""
+
+
+def _metadata_error(path: Path, reason: str) -> IndexMetadataError:
+    """Build a consistent index metadata error."""
+    return IndexMetadataError(
+        f"Invalid index metadata in {path}: {reason}. "
+        "Re-run `lecture-rag ingest` to rebuild the index."
+    )
 
 
 class VectorIndex:
@@ -31,40 +76,71 @@ class VectorIndex:
         self.index: faiss.Index = faiss.IndexFlatIP(dimension)
         self.documents: list[Document] = []
 
-    def check_model(self, model_name: str, dimension: int) -> None:
+    def check_model(
+        self,
+        model_name: str,
+        dimension: int,
+        allow_model_mismatch: bool = False,
+    ) -> str | None:
         """Check that an embedding model can query this index.
 
         Args:
             model_name: Name of the embedding model that will query the index
             dimension: Dimensionality of vectors produced by the model
+            allow_model_mismatch: Continue with a warning when the model name
+                differs from the model the index was built with
+
+        Returns:
+            A warning message when the model names differ and mismatches are
+            allowed, otherwise None
 
         Raises:
             IndexModelMismatchError: If the model dimension differs from the
-                index dimension
+                index dimension, or if the model name differs without
+                permission to continue
         """
+        shown = shorten_model_name(model_name)
         if dimension != self.dimension:
             if self.model_name is not None:
+                shown_index = shorten_model_name(self.model_name)
                 raise IndexModelMismatchError(
-                    f"Embedding model {model_name!r} produces {dimension}-dimensional "
-                    f"vectors, but the index was built with {self.model_name!r} "
-                    f"({self.dimension} dimensions). Use --model {self.model_name} "
+                    f"Embedding model {shown!r} produces {dimension}-dimensional "
+                    f"vectors, but the index was built with {shown_index!r} "
+                    f"({self.dimension} dimensions). Use --model {shown_index} "
                     "or re-run `lecture-rag ingest` with this model."
                 )
             raise IndexModelMismatchError(
-                f"Embedding model {model_name!r} produces {dimension}-dimensional "
+                f"Embedding model {shown!r} produces {dimension}-dimensional "
                 f"vectors, but the index was built with a {self.dimension}-dimensional "
                 "model. Use the model the index was built with or re-run "
                 "`lecture-rag ingest` with this model."
             )
 
-        if self.model_name is not None and self.model_name != model_name:
-            logger.warning(
-                "Embedding model %r differs from the model used to build the index "
-                "(%r); proceeding because both produce %d-dimensional vectors.",
-                model_name,
-                self.model_name,
-                self.dimension,
+        if self.model_name is None:
+            return None
+
+        if normalize_model_name(model_name) == normalize_model_name(self.model_name):
+            return None
+
+        shown_index = shorten_model_name(self.model_name)
+        if not allow_model_mismatch:
+            raise IndexModelMismatchError(
+                f"Embedding model {shown!r} does not match the model the index "
+                f"was built with ({shown_index!r}). Use --model {shown_index} "
+                "or re-run `lecture-rag ingest` with this model, or pass "
+                "--allow-model-mismatch to continue anyway."
             )
+
+        logger.warning(
+            "Embedding model %r differs from the index model %r; "
+            "results may be unreliable.",
+            shown,
+            shown_index,
+        )
+        return (
+            f"Embedding model {shown!r} differs from the index model "
+            f"{shown_index!r}; results may be unreliable."
+        )
 
     def add_documents(self, documents: list[Document], embeddings: np.ndarray) -> None:
         """Add documents and their embeddings to the index.
@@ -162,15 +238,24 @@ class VectorIndex:
             )
 
         meta_path = path / "index_meta.json"
+        if meta_path.is_symlink():
+            raise _metadata_error(path, "index_meta.json is a symlink")
+
         if meta_path.exists():
             try:
                 with open(meta_path, encoding="utf-8") as f:
                     metadata = json.load(f)
             except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
-                raise ValueError(f"Invalid index metadata in {path}") from e
+                raise _metadata_error(
+                    path,
+                    f"cannot read index_meta.json ({e})",
+                ) from e
 
             if not isinstance(metadata, dict):
-                raise ValueError(f"Invalid index metadata in {path}")
+                raise _metadata_error(
+                    path,
+                    "index_meta.json must contain a JSON object",
+                )
 
             dimension = metadata.get("dimension")
             model_name = metadata.get("model_name")
@@ -181,12 +266,17 @@ class VectorIndex:
                 or isinstance(dimension, bool)
                 or not (model_name is None or isinstance(model_name, str))
             ):
-                raise ValueError(f"Invalid index metadata in {path}")
+                raise _metadata_error(
+                    path,
+                    "index_meta.json must contain a model_name (string or null) and an "
+                    "integer dimension",
+                )
 
             if dimension != faiss_index.d:
-                raise ValueError(
-                    f"Index metadata dimension {dimension} does not match "
-                    f"the FAISS index in {path}"
+                raise _metadata_error(
+                    path,
+                    f"metadata dimension {dimension} does not match the FAISS "
+                    f"index dimension {faiss_index.d}",
                 )
         else:
             dimension = faiss_index.d

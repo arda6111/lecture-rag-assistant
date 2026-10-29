@@ -269,3 +269,105 @@ def test_matching_model_still_works(
     result = runner.invoke(main, args)
 
     assert result.exit_code == 0, result.output
+
+
+class OtherEmbeddingModel(HashingEmbeddingModel):
+    """Offline 384-dimensional model for name mismatch tests."""
+
+    dimension = 384
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_model_name_mismatch_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """A different model name with the same dimension produces a clean error."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    args = (
+        ask_args(index_dir, model="other-model")
+        if command == "ask"
+        else eval_args(index_dir, model="other-model")
+    )
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "--allow-model-mismatch" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_model_name_mismatch_allowed_with_warning(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """Allowing a model name mismatch succeeds with a warning."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    args = (
+        ask_args(index_dir, model="other-model")
+        if command == "ask"
+        else eval_args(index_dir, model="other-model")
+    )
+    args.append("--allow-model-mismatch")
+
+    result = runner.invoke(main, args)
+
+    assert result.exit_code == 0, result.output
+    assert "Warning:" in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_prefixed_matching_model_does_not_warn(
+    runner: CliRunner,
+    index_dir: Path,
+    command: str,
+) -> None:
+    """A prefixed version of the ingest model matches without a warning."""
+    model = "sentence-transformers/all-MiniLM-L6-v2"
+    args = (
+        ask_args(index_dir, model=model)
+        if command == "ask"
+        else eval_args(index_dir, model=model)
+    )
+
+    result = runner.invoke(main, args)
+
+    assert result.exit_code == 0, result.output
+    assert "Warning:" not in result.output
+
+
+def test_eval_compare_model_name_mismatch_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """eval --compare also rejects a different model name without the flag."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", OtherEmbeddingModel)
+    args = eval_args(index_dir, model="other-model") + ["--compare"]
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "--allow-model-mismatch" in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_corrupt_index_metadata_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    command: str,
+) -> None:
+    """Corrupt metadata gives a clean failure without the generic suffix."""
+    (index_dir / "index_meta.json").write_text("{not json", encoding="utf-8")
+    args = ask_args(index_dir) if command == "ask" else eval_args(index_dir)
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "Re-run `lecture-rag ingest`" in result.output
+    assert "Run `lecture-rag ingest` first" not in result.output

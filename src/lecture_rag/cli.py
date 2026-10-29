@@ -19,7 +19,7 @@ from .eval import (
     run_full_evaluation,
 )
 from .generation import Generator
-from .index import IndexModelMismatchError, VectorIndex
+from .index import IndexMetadataError, IndexModelMismatchError, VectorIndex
 from .pdf_loader import load_directory
 from .retrieval import (
     RetrievalMode,
@@ -46,17 +46,33 @@ def _resolve_retrieval_mode(retrieval: str | None) -> RetrievalMode:
         raise click.ClickException(f"{e} (check LECTURE_RAG_RETRIEVAL_MODE)") from e
 
 
-def _load_retriever(index_dir: Path, model: str, retrieval: str | None) -> Retriever:
+def _load_retriever(
+    index_dir: Path,
+    model: str,
+    retrieval: str | None,
+    allow_model_mismatch: bool = False,
+) -> Retriever:
     """Validate the retrieval mode, then load the retriever."""
     mode = _resolve_retrieval_mode(retrieval)
     try:
-        return Retriever.from_index_path(index_dir, model, mode=mode)
+        retriever = Retriever.from_index_path(
+            index_dir,
+            model,
+            mode=mode,
+            allow_model_mismatch=allow_model_mismatch,
+        )
+    except IndexMetadataError as e:
+        raise click.ClickException(str(e)) from e
     except IndexModelMismatchError as e:
         raise click.ClickException(str(e)) from e
     except EmbeddingModelError as e:
         raise click.ClickException(str(e)) from e
     except ValueError as e:
         raise click.ClickException(f"{e}. Run `lecture-rag ingest` first.") from e
+
+    if retriever.model_warning is not None:
+        click.echo(f"Warning: {retriever.model_warning}", err=True)
+    return retriever
 
 
 def _validate_output_dir(
@@ -198,6 +214,11 @@ def ingest(
     help="Sentence-transformers model name (must match ingest model)",
 )
 @click.option(
+    "--allow-model-mismatch",
+    is_flag=True,
+    help="Continue with a warning when --model differs from the model the index was built with",
+)
+@click.option(
     "--k",
     type=click.IntRange(min=1),
     default=5,
@@ -226,6 +247,7 @@ def ask(
     query: str,
     index_dir: Path,
     model: str,
+    allow_model_mismatch: bool,
     k: int,
     mode: str,
     retrieval: str | None,
@@ -238,7 +260,7 @@ def ask(
         raise click.ClickException(str(e)) from e
 
     click.echo(f"Loading index from {index_dir}...")
-    retriever = _load_retriever(index_dir, model, retrieval)
+    retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
 
     click.echo("Retrieving relevant documents...")
     outcome = retriever.search(query, k=k)
@@ -292,6 +314,11 @@ def ask(
     help="Sentence-transformers model name",
 )
 @click.option(
+    "--allow-model-mismatch",
+    is_flag=True,
+    help="Continue with a warning when --model differs from the model the index was built with",
+)
+@click.option(
     "--k",
     type=click.IntRange(min=1),
     default=5,
@@ -334,6 +361,7 @@ def eval(
     eval_file: Path,
     index_dir: Path,
     model: str,
+    allow_model_mismatch: bool,
     k: int,
     retrieval: str | None,
     compare: bool,
@@ -368,7 +396,7 @@ def eval(
         _prepare_output_dir(output)
 
     click.echo(f"Loading index from {index_dir}...")
-    retriever = _load_retriever(index_dir, model, retrieval)
+    retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
 
     if output is not None:
         command = (
