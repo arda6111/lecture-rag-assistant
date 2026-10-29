@@ -133,6 +133,18 @@ Options:
 - `--k INT`: Number of sources to retrieve (default: 5)
 - `--mode {llm|extractive}`: Answer generation mode (default: `extractive`)
 - `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
+- `--abstain-threshold FLOAT`: Minimum dense similarity required to answer (default: `LECTURE_RAG_ABSTAIN_THRESHOLD` or `0.35`)
+
+### Abstention
+
+When the best dense cosine similarity between the question and any indexed chunk falls below the abstain threshold, the system declines to answer instead of producing an answer without support:
+
+```bash
+lecture-rag ask "What is the capital of France?"
+# The lecture materials do not seem to cover this question.
+```
+
+The signal always uses dense similarity because BM25 and RRF scores are on different scales and are not comparable to a fixed cosine threshold.
 
 ### Eval Command
 
@@ -147,8 +159,12 @@ Options:
 - `--k INT`: Number of documents for metrics (default: 5)
 - `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
 - `--compare`: Evaluate and compare dense, bm25, and hybrid retrieval
+- `--sweep`: Sweep abstain thresholds from 0.20 to 0.60 in dense mode
+- `--abstain-threshold FLOAT`: Minimum dense similarity required to answer (default: `LECTURE_RAG_ABSTAIN_THRESHOLD` or `0.35`)
 
 Set the `LECTURE_RAG_RETRIEVAL_MODE` environment variable to choose the default retrieval mode for `ask` and `eval`. The `--retrieval` option overrides the environment variable.
+
+Set the `LECTURE_RAG_ABSTAIN_THRESHOLD` environment variable to choose the default abstain threshold for `ask` and `eval` (default: `0.35`). The `--abstain-threshold` option overrides the environment variable.
 
 ## Web Demo
 
@@ -163,31 +179,50 @@ Navigate to http://localhost:8501 in your browser.
 
 ## Evaluation Results
 
-Results on the included sample dataset (6 questions over 2 lecture PDFs):
+**Eval set:** 33 questions in `eval/eval_set.json` (25 answerable spread over all 4 pages, many paraphrased; 8 unanswerable off-topic questions). Hit@k and MRR are computed over the 25 answerable questions; abstain accuracy over all 33.
+
+**Retrieval mode comparison (k=5 and k=1, abstain threshold 0.35)**
+
+| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 | Abstain acc |
+|------|-------|-------|-------|-------|-------------|
+| dense | 1.000 | 1.000 | 1.000 | 1.000 | 0.939 |
+| bm25 | 1.000 | 1.000 | 1.000 | 1.000 | 0.939 |
+| hybrid | 1.000 | 1.000 | 1.000 | 1.000 | 0.939 |
+
+**Abstention at threshold 0.35 (dense)**
 
 | Metric | Value |
 |--------|-------|
-| Total Questions | 6 |
-| Hit@5 | 1.000 |
-| MRR@5 | 1.000 |
-| Mean Score | 0.379 |
+| Abstain accuracy | 0.939 |
+| Abstain precision | 0.800 |
+| Abstain recall | 1.000 |
+| Hit@5 after abstain | 0.920 |
+| Mean retrieval score (top-5) | 0.308 |
 
-**Retrieval mode comparison (6 questions, k=5 and k=1, measured with lecture-rag eval --compare)**
+**Threshold sweep (`lecture-rag eval --sweep`)**
 
-| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
-|------|-------|-------|-------|-------|
-| dense | 1.000 | 1.000 | 1.000 | 1.000 |
-| bm25 | 1.000 | 1.000 | 1.000 | 1.000 |
-| hybrid | 1.000 | 1.000 | 1.000 | 1.000 |
+| Threshold | Abstain acc |
+|-----------|-------------|
+| 0.20 | 0.939 |
+| 0.25 | 0.909 |
+| 0.30 | 0.939 |
+| 0.35 | 0.939 |
+| 0.40 | 0.939 |
+| 0.45 | 0.879 |
+| 0.50 | 0.818 |
+| 0.55 | 0.727 |
+| 0.60 | 0.576 |
 
-The 6-question set is too easy to separate the modes; a larger set that includes unanswerable questions is planned.
+All 8 off-topic questions are rejected at 0.35 (their best similarity is 0.11 to 0.29), but 2 answerable paraphrased questions (strongly connected components 0.23, memoization vs bottom-up 0.26) fall below it and are wrongly rejected. Retrieval itself is saturated (Hit@1 = 1.0 for all modes) because the sample corpus has only 4 pages; a larger corpus is needed to separate dense, BM25 and hybrid. 0.35 was picked as the midpoint of the 0.30 to 0.40 plateau.
 
-**Interpretation:**
-- **Hit@5 = 1.000**: All questions found the correct source in top 5 results
-- **MRR@5 = 1.000**: Correct sources ranked first on average
-- **Mean Score = 0.379**: Average cosine similarity across all top-5 results
+**Reproduce:**
 
-These results demonstrate that the embedding model effectively captures semantic similarity for technical CS content.
+```bash
+lecture-rag ingest data/sample_lectures
+lecture-rag eval --compare
+lecture-rag eval --compare --k 1
+lecture-rag eval --sweep
+```
 
 ## Testing
 
