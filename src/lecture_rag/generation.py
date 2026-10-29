@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from urllib.parse import urlparse
 
@@ -12,6 +13,25 @@ from .models import Answer, RetrievalResult
 logger = logging.getLogger(__name__)
 
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+SECRET_TOKEN_PATTERN = re.compile(r"sk-[A-Za-z0-9_\-*]{4,}")
+
+
+def redact_secrets(text: str, secrets: list[str]) -> str:
+    """Replace known secrets and secret-like tokens in text.
+
+    Args:
+        text: Text that may contain secrets
+        secrets: Secret values to remove
+
+    Returns:
+        The text with each non-empty secret and every token that looks like an
+        API key replaced by ``[redacted]``
+    """
+    redacted = text
+    for secret in sorted((secret for secret in secrets if secret), key=len, reverse=True):
+        redacted = redacted.replace(secret, "[redacted]")
+    return SECRET_TOKEN_PATTERN.sub("[redacted]", redacted)
 
 
 def is_local_base_url(url: str | None) -> bool:
@@ -54,6 +74,7 @@ class OpenAICompatibleProvider(GenerationProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str = "gpt-3.5-turbo",
+        timeout: float = 60.0,
     ) -> None:
         """Initialize the provider.
 
@@ -61,6 +82,7 @@ class OpenAICompatibleProvider(GenerationProvider):
             api_key: API key for authentication
             base_url: Base URL for the API
             model: Model name to use
+            timeout: Request timeout in seconds
         """
         resolved_key = api_key or os.getenv("OPENAI_API_KEY") or None
         resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL") or None
@@ -74,8 +96,19 @@ class OpenAICompatibleProvider(GenerationProvider):
             # Only localhost/127.0.0.1 servers skip the key.
             resolved_key = "not-needed"
 
+        self._api_key = resolved_key
         self.model = model
-        self.client = OpenAI(api_key=resolved_key, base_url=resolved_base_url)
+        self.timeout = timeout
+        self.client = OpenAI(
+            api_key=resolved_key,
+            base_url=resolved_base_url,
+            timeout=timeout,
+            max_retries=1,
+        )
+
+    def __repr__(self) -> str:
+        """Return a representation that never includes the API key."""
+        return f"{self.__class__.__name__}(model={self.model!r})"
 
     def generate(self, query: str, sources: list[RetrievalResult]) -> str:
         """Generate an answer using the LLM.
@@ -112,8 +145,9 @@ class OpenAICompatibleProvider(GenerationProvider):
             return answer
 
         except Exception as e:
-            logger.error(f"Error generating answer: {e}")
-            raise ValueError(f"Failed to generate answer: {e}") from e
+            message = redact_secrets(str(e), [self._api_key])
+            logger.error("Error generating answer: %s", message)
+            raise ValueError(f"Failed to generate answer: {message}") from e
 
     def _build_context(self, sources: list[RetrievalResult]) -> str:
         """Build context string from sources."""

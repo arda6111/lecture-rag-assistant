@@ -9,7 +9,7 @@ from typing import Any
 import click
 from dotenv import find_dotenv, load_dotenv
 
-from .chunking import chunk_documents
+from .corpus_index import build_index
 from .embeddings import EmbeddingModel, EmbeddingModelError
 from .eval import (
     EVAL_MODES,
@@ -19,8 +19,7 @@ from .eval import (
     run_full_evaluation,
 )
 from .generation import Generator
-from .index import IndexModelMismatchError, InvalidIndexError, VectorIndex
-from .pdf_loader import load_directory
+from .index import IndexModelMismatchError, InvalidIndexError
 from .rerank import CrossEncoderReranker, RerankerError, default_rerank_model
 from .retrieval import (
     RetrievalMode,
@@ -214,37 +213,25 @@ def ingest(
     if not model.strip():
         raise click.BadParameter("must not be empty", param_hint="--model")
 
-    click.echo(f"Loading PDFs from {input_dir}...")
-    documents = load_directory(
-        input_dir,
-        max_file_size_mb=max_file_size_mb,
-        max_pages=max_pages,
-    )
-
-    if not documents:
-        raise click.ClickException(f"No PDF documents could be loaded from {input_dir}")
-
-    click.echo(f"Chunking {len(documents)} documents...")
-    chunks = chunk_documents(documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-
-    click.echo(f"Loading embedding model: {model}...")
     try:
         embedding_model = EmbeddingModel(model)
     except EmbeddingModelError as e:
         raise click.ClickException(str(e)) from e
 
-    click.echo("Generating embeddings...")
-    texts = [doc.text for doc in chunks]
-    embeddings = embedding_model.embed_texts(texts)
-
-    click.echo("Building index...")
-    vector_index = VectorIndex(embedding_model.dimension, model_name=model)
-    vector_index.add_documents(chunks, embeddings)
-
-    click.echo(f"Saving index to {index_dir}...")
-    vector_index.save(index_dir)
-
-    click.echo(f"Indexed {len(chunks)} chunks from {len(documents)} documents")
+    try:
+        build_index(
+            input_dir,
+            index_dir,
+            embedding_model,
+            model,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            progress=click.echo,
+            max_file_size_mb=max_file_size_mb,
+            max_pages=max_pages,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
 
 
 @main.command()

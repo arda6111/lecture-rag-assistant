@@ -243,6 +243,12 @@ Navigate to http://localhost:8501 in your browser.
 
 The sidebar controls the retrieval mode (dense, bm25, or hybrid), the abstain threshold, the number of sources to retrieve, the answer mode (extractive or llm), and an optional cross-encoder rerank toggle (off by default; the model is loaded only when it is switched on). It also lets you set the index directory; the `LECTURE_RAG_INDEX_DIR` environment variable sets its default value (falling back to `index`).
 
+### Public demo on Streamlit Community Cloud
+
+The public demo runs in corpus mode on the committed PDFs in `data/corpus`. Corpus mode is selected automatically when `LECTURE_RAG_INDEX_DIR` is unset and `index/index.faiss` does not exist, which is the case on Streamlit Community Cloud. Set `LECTURE_RAG_DEMO_MODE=corpus` or `LECTURE_RAG_DEMO_MODE=local` to select a mode explicitly. The index is built on first start into a temporary directory under the system temp path, then reused by later sessions.
+
+The demo limits each question to 500 characters, retrieves at most 10 sources, and allows at most 30 searches per browser session (changing a sidebar setting reruns the search and counts as one). Reranking is off by default and can be disabled for a deployment with `LECTURE_RAG_DEMO_DISABLE_RERANK=1` (also accepts `true` or `yes`). An OpenAI API key is optional. When entered, it is held only in that session's Streamlit session state (not cached, logged or written to disk), and it is sent only to `https://api.openai.com/v1`; without a key the demo uses extractive answers.
+
 To regenerate the screenshot in this README:
 
 ```bash
