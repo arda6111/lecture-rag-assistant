@@ -115,7 +115,7 @@ def load_pdf(
 
     try:
         with fitz.open(pdf_path) as doc:
-            if doc.needs_pass:
+            if doc.needs_pass or doc.is_encrypted or (doc.metadata or {}).get("encryption"):
                 raise ValueError(f"PDF is encrypted and cannot be read: {pdf_path}")
 
             page_count = len(doc)
@@ -173,7 +173,9 @@ def load_directory(
 
     max_file_size_mb, max_pages = _resolve_limits(max_file_size_mb, max_pages)
 
-    pdf_files = sorted(directory.glob("*.pdf"))
+    pdf_files = sorted(
+        path for path in directory.iterdir() if path.suffix.lower() == ".pdf"
+    )
 
     if not pdf_files:
         logger.warning(f"No PDF files found in {directory}")

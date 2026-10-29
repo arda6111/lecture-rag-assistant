@@ -109,3 +109,31 @@ def test_encrypted_pdf_rejected(temp_dir: Path) -> None:
 
     with pytest.raises(ValueError, match="encrypted"):
         load_pdf(pdf_path)
+
+
+def test_owner_password_only_pdf_rejected(temp_dir: Path) -> None:
+    """PDFs encrypted with only an owner password are rejected too."""
+    pdf_path = temp_dir / "owner_only.pdf"
+    doc = fitz.open()
+    doc.new_page().insert_text((50, 50), "Restricted lecture content.", fontsize=12)
+    doc.save(
+        str(pdf_path),
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        owner_pw="owner",
+        user_pw="",
+    )
+    doc.close()
+
+    with pytest.raises(ValueError, match="encrypted"):
+        load_pdf(pdf_path)
+
+
+def test_load_directory_accepts_uppercase_suffix(sample_pdf: Path, temp_dir: Path) -> None:
+    """Files ending in .PDF are loaded like .pdf files."""
+    upper_dir = temp_dir / "upper"
+    upper_dir.mkdir()
+    shutil.copy(sample_pdf, upper_dir / "ALGO.PDF")
+
+    documents = load_directory(upper_dir)
+
+    assert {document.file_name for document in documents} == {"ALGO.PDF"}
