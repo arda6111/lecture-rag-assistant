@@ -4,9 +4,12 @@ import os
 from pathlib import Path
 
 import streamlit as st
+from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag.generation import Generator
-from lecture_rag.retrieval import DEFAULT_ABSTAIN_THRESHOLD, Retriever
+from lecture_rag.retrieval import Retriever, parse_abstain_threshold
+
+load_dotenv(find_dotenv(usecwd=True))
 
 st.set_page_config(
     page_title="Lecture RAG Assistant",
@@ -26,17 +29,6 @@ def load_retriever(index_path: str, model_name: str) -> Retriever:
     return Retriever.from_index_path(Path(index_path), model_name)
 
 
-def configured_abstain_threshold() -> float:
-    """Return the abstain threshold from the environment or the default."""
-    raw_value = os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")
-    if raw_value is None:
-        return DEFAULT_ABSTAIN_THRESHOLD
-    try:
-        return float(raw_value)
-    except ValueError:
-        return DEFAULT_ABSTAIN_THRESHOLD
-
-
 index_dir = st.sidebar.text_input(
     "Index Directory", value=os.getenv("LECTURE_RAG_INDEX_DIR", "index")
 )
@@ -52,7 +44,7 @@ abstain_threshold = st.sidebar.slider(
     "Abstain threshold",
     min_value=0.0,
     max_value=1.0,
-    value=configured_abstain_threshold(),
+    value=parse_abstain_threshold(os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")),
     step=0.05,
 )
 
@@ -70,13 +62,11 @@ except Exception as e:
 query = st.text_input("Ask a question:", placeholder="What is dynamic programming?")
 
 if query:
-    retriever.set_mode(retrieval_mode)
-
     if retriever.should_abstain(query, abstain_threshold):
         st.info("The lecture materials do not seem to cover this question.")
     else:
         with st.spinner("Searching..."):
-            sources = retriever.retrieve(query, k=k)
+            sources = retriever.retrieve(query, k=k, mode=retrieval_mode)
 
         best_similarity = retriever.max_dense_similarity(query)
 
