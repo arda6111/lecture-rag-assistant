@@ -1,7 +1,7 @@
 """FAISS-based vector index for document retrieval."""
 
+import json
 import logging
-import pickle
 from pathlib import Path
 
 import faiss
@@ -80,8 +80,8 @@ class VectorIndex:
 
         faiss.write_index(self.index, str(path / "index.faiss"))
 
-        with open(path / "documents.pkl", "wb") as f:
-            pickle.dump(self.documents, f)
+        with open(path / "documents.json", "w", encoding="utf-8") as f:
+            json.dump([document.model_dump() for document in self.documents], f, ensure_ascii=False, indent=2)
 
         logger.info(f"Saved index with {len(self.documents)} documents to {path}")
 
@@ -96,15 +96,15 @@ class VectorIndex:
             Loaded VectorIndex instance
         """
         index_path = path / "index.faiss"
-        docs_path = path / "documents.pkl"
+        docs_path = path / "documents.json"
 
         if not index_path.exists() or not docs_path.exists():
             raise ValueError(f"Index files not found in {path}")
 
         faiss_index = faiss.read_index(str(index_path))
 
-        with open(docs_path, "rb") as f:
-            documents = pickle.load(f)
+        with open(docs_path, encoding="utf-8") as f:
+            documents = [Document.model_validate(item) for item in json.load(f)]
 
         vector_index = cls(faiss_index.d)
         vector_index.index = faiss_index
