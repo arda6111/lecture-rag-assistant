@@ -2,12 +2,14 @@
 
 import os
 from pathlib import Path
+from typing import cast
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag.generation import Generator
 from lecture_rag.retrieval import (
+    RetrievalMode,
     Retriever,
     default_retrieval_mode,
     parse_abstain_threshold,
@@ -27,9 +29,13 @@ st.markdown(
 
 
 @st.cache_resource
-def load_retriever(index_path: str, model_name: str) -> Retriever:
+def load_retriever(
+    index_path: str,
+    model_name: str,
+    retrieval_mode: RetrievalMode,
+) -> Retriever:
     """Load the retriever (cached)."""
-    return Retriever.from_index_path(Path(index_path), model_name)
+    return Retriever.from_index_path(Path(index_path), model_name, mode=retrieval_mode)
 
 
 index_dir = st.sidebar.text_input(
@@ -41,12 +47,19 @@ mode = st.sidebar.selectbox("Answer Mode", options=["extractive", "llm"])
 RETRIEVAL_MODES = ["dense", "bm25", "hybrid"]
 try:
     configured_mode = default_retrieval_mode()
-except ValueError:
-    configured_mode = "dense"
-retrieval_mode = st.sidebar.selectbox(
-    "Retrieval mode",
-    options=RETRIEVAL_MODES,
-    index=RETRIEVAL_MODES.index(configured_mode),
+except ValueError as e:
+    st.error(
+        f"Configuration error: {e}. "
+        "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid."
+    )
+    st.stop()
+retrieval_mode = cast(
+    RetrievalMode,
+    st.sidebar.selectbox(
+        "Retrieval mode",
+        options=RETRIEVAL_MODES,
+        index=RETRIEVAL_MODES.index(configured_mode),
+    ),
 )
 abstain_threshold = st.sidebar.slider(
     "Abstain threshold",
@@ -61,7 +74,7 @@ if not Path(index_dir).exists():
     st.stop()
 
 try:
-    retriever = load_retriever(index_dir, model_name)
+    retriever = load_retriever(index_dir, model_name, retrieval_mode)
     st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
 except Exception as e:
     st.error(f"Failed to load index: {e}")
