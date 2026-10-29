@@ -1,0 +1,386 @@
+{
+  "questions": [
+    {
+      "question": "Why is attention in a transformer computationally expensive for long sequences?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        3
+      ]
+    },
+    {
+      "question": "Why are attention exponents divided by the square root of the dimensionality?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        4
+      ]
+    },
+    {
+      "question": "How does temporal processing in a transformer compare to a recurrent neural network?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        4
+      ]
+    },
+    {
+      "question": "How can a transformer be viewed as a graph neural network?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        5
+      ]
+    },
+    {
+      "question": "Why do transformers use layer normalisation instead of batch normalisation?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        6
+      ]
+    },
+    {
+      "question": "How do vision transformers add position information to image patches?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        7
+      ]
+    },
+    {
+      "question": "How is masking used for auto-regressive language modelling with transformers?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        7,
+        8
+      ]
+    },
+    {
+      "question": "Which optimiser is typically used to train transformers, and how are training instabilities mitigated?",
+      "expected_file": "intro-transformers-2304.10557v6.pdf",
+      "expected_pages": [
+        9
+      ]
+    },
+    {
+      "question": "What two strategies prevent an autoencoder from learning the identity function?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        4
+      ]
+    },
+    {
+      "question": "When can the sigmoid activation be used in the output layer of an autoencoder?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        7
+      ]
+    },
+    {
+      "question": "Which loss functions are commonly used to train autoencoders?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        8
+      ]
+    },
+    {
+      "question": "How is the reconstruction error of an autoencoder defined?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        11
+      ]
+    },
+    {
+      "question": "How do latent features compare to the original MNIST features for kNN classification in accuracy and running time?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        16,
+        17
+      ]
+    },
+    {
+      "question": "What is the curse of dimensionality?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        18
+      ]
+    },
+    {
+      "question": "How are autoencoders used for anomaly detection?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        19,
+        21,
+        22
+      ]
+    },
+    {
+      "question": "What do denoising autoencoders do?",
+      "expected_file": "intro-autoencoders-2201.03898v1.pdf",
+      "expected_pages": [
+        23
+      ]
+    },
+    {
+      "question": "What are the four quadrants of decision-making under uncertainty?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        3
+      ]
+    },
+    {
+      "question": "What is the difference between discounted and average reward processes?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        5
+      ]
+    },
+    {
+      "question": "What distinguishes a Markov decision process from a Markov reward process?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        8
+      ]
+    },
+    {
+      "question": "What is the Bellman optimality equation?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        11
+      ]
+    },
+    {
+      "question": "How is an optimal policy obtained from the optimal action-value function?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        13
+      ]
+    },
+    {
+      "question": "How is the temporal difference defined in TD learning?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        14,
+        15
+      ]
+    },
+    {
+      "question": "How does the Q-learning algorithm update its estimate of the action-value function?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        18,
+        19
+      ]
+    },
+    {
+      "question": "Why is stochastic approximation relevant to reinforcement learning?",
+      "expected_file": "rl-tutorial-2304.00803v1.pdf",
+      "expected_pages": [
+        21
+      ]
+    },
+    {
+      "question": "What are safety-critical systems?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        4
+      ]
+    },
+    {
+      "question": "Why is robustness a concern for deep neural networks?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        5
+      ]
+    },
+    {
+      "question": "Which datasets are used as running examples in the neural network testing tutorial?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        10
+      ]
+    },
+    {
+      "question": "What are the high-level test criteria based on a Bayesian network abstraction?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        16
+      ]
+    },
+    {
+      "question": "How does the fuzzing engine in DeepConcolic work?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        27
+      ]
+    },
+    {
+      "question": "What does the TestRNN tool test?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        35
+      ]
+    },
+    {
+      "question": "How does EKiML embed knowledge into random forests?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        39
+      ]
+    },
+    {
+      "question": "What is a universal adversarial perturbation as generated by GUAP?",
+      "expected_file": "testing-neural-networks-2108.01734v1.pdf",
+      "expected_pages": [
+        42
+      ]
+    },
+    {
+      "question": "Why do machine learning models behave differently once they are deployed in the wild?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        9
+      ]
+    },
+    {
+      "question": "What should practitioners do when concept or data drift occurs?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        12
+      ]
+    },
+    {
+      "question": "How can stratified sampling reveal bias between demographic groups?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        11,
+        12
+      ]
+    },
+    {
+      "question": "What is model parity using a confusion matrix?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        15,
+        16
+      ]
+    },
+    {
+      "question": "What is the equalized odds parity metric?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        16
+      ]
+    },
+    {
+      "question": "How can canary deployment be used for bias mitigation?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        17,
+        18
+      ]
+    },
+    {
+      "question": "What is blue/green deployment?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        18
+      ]
+    },
+    {
+      "question": "What went wrong with the Tay chatbot and how could it have been prevented?",
+      "expected_file": "mlops-primer-2301.05775v1.pdf",
+      "expected_pages": [
+        7,
+        8,
+        19,
+        20
+      ]
+    },
+    {
+      "question": "What is the general clustering problem?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        2
+      ]
+    },
+    {
+      "question": "How are the parameters of a single Gaussian estimated by maximum likelihood?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        3
+      ]
+    },
+    {
+      "question": "What are responsibilities in the EM algorithm for Gaussian mixture models?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        5
+      ]
+    },
+    {
+      "question": "How can k-means be derived from EM for Gaussian mixtures?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        8
+      ]
+    },
+    {
+      "question": "What is the time complexity of k-means?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        10
+      ]
+    },
+    {
+      "question": "What is weighted kernel k-means?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        10,
+        11,
+        13
+      ]
+    },
+    {
+      "question": "How does DBSCAN identify core points and outliers?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        20,
+        21
+      ]
+    },
+    {
+      "question": "How is DBSCAN related to the mean shift algorithm?",
+      "expected_file": "clustering-intro-2006.04916v1.pdf",
+      "expected_pages": [
+        23,
+        25
+      ]
+    },
+    {
+      "question": "What is the capital of Australia?"
+    },
+    {
+      "question": "How do I bake sourdough bread at home?"
+    },
+    {
+      "question": "Who won the 2018 FIFA World Cup?"
+    },
+    {
+      "question": "Why does water boil at a lower temperature at high altitude?"
+    },
+    {
+      "question": "How does photosynthesis convert light into chemical energy?"
+    },
+    {
+      "question": "What were the main causes of the French Revolution?"
+    },
+    {
+      "question": "How do I fix a flat tire on a bicycle?"
+    },
+    {
+      "question": "What is the recommended dosage of ibuprofen for adults?"
+    },
+    {
+      "question": "How does a support vector machine choose its maximum margin hyperplane?"
+    },
+    {
+      "question": "What is the average time complexity of quicksort?"
+    }
+  ]
+}
