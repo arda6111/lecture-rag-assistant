@@ -1,0 +1,89 @@
+{
+  "command": "lecture-rag eval --eval-file eval/eval_set.json --k 5 --abstain-threshold 0.35 --output eval",
+  "eval_file": "eval/eval_set.json",
+  "k": 5,
+  "abstain_threshold": 0.35,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "indexed_chunks": 8,
+  "questions": {
+    "total": 33,
+    "answerable": 25,
+    "unanswerable": 8
+  },
+  "modes": {
+    "dense": {
+      "score_type": "cosine",
+      "hit_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "hit_at_1": 1.0,
+      "mrr_at_1": 1.0,
+      "abstain_accuracy": 0.9393939393939394,
+      "abstain_precision": 0.8,
+      "abstain_recall": 1.0,
+      "hit_at_k_after_abstain": 0.92,
+      "mean_score": 0.2949431143023751
+    },
+    "bm25": {
+      "score_type": "bm25",
+      "hit_at_k": 1.0,
+      "mrr_at_k": 0.98,
+      "hit_at_1": 0.96,
+      "mrr_at_1": 0.96,
+      "abstain_accuracy": 0.9393939393939394,
+      "abstain_precision": 0.8,
+      "abstain_recall": 1.0,
+      "hit_at_k_after_abstain": 0.92,
+      "mean_score": 2.862903659168501
+    },
+    "hybrid": {
+      "score_type": "rrf",
+      "hit_at_k": 1.0,
+      "mrr_at_k": 1.0,
+      "hit_at_1": 1.0,
+      "mrr_at_1": 1.0,
+      "abstain_accuracy": 0.9393939393939394,
+      "abstain_precision": 0.8,
+      "abstain_recall": 1.0,
+      "hit_at_k_after_abstain": 0.92,
+      "mean_score": 0.02477074387057048
+    }
+  },
+  "sweep": [
+    {
+      "threshold": 0.2,
+      "abstain_accuracy": 0.9393939393939394
+    },
+    {
+      "threshold": 0.25,
+      "abstain_accuracy": 0.9090909090909091
+    },
+    {
+      "threshold": 0.3,
+      "abstain_accuracy": 0.9393939393939394
+    },
+    {
+      "threshold": 0.35,
+      "abstain_accuracy": 0.9393939393939394
+    },
+    {
+      "threshold": 0.4,
+      "abstain_accuracy": 0.9393939393939394
+    },
+    {
+      "threshold": 0.45,
+      "abstain_accuracy": 0.8787878787878788
+    },
+    {
+      "threshold": 0.5,
+      "abstain_accuracy": 0.8181818181818182
+    },
+    {
+      "threshold": 0.55,
+      "abstain_accuracy": 0.7272727272727273
+    },
+    {
+      "threshold": 0.6,
+      "abstain_accuracy": 0.5757575757575758
+    }
+  ]
+}
