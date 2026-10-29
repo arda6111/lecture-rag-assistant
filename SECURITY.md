@@ -10,15 +10,15 @@ Security updates are provided for the following versions:
 
 ## Reporting a Vulnerability
 
-Please report vulnerabilities privately. Do not open a public issue for a
+Please report vulnerabilities privately and do not open a public issue for a
 security problem.
 
-Contact the maintainer through the GitHub profile
-[@arda6111](https://github.com/arda6111) and ask for a private channel
-before sharing details. Include the affected version, steps to reproduce,
-and the impact you expect.
+Use GitHub private vulnerability reporting: open the repository's Security tab
+and choose "Report a vulnerability". This option becomes available once the
+repository is public. Until then there is no private reporting channel, so
+please hold back details until it is available.
 
-You can expect an initial response within 7 days.
+Include the affected version, steps to reproduce, and the impact you expect.
 
 ## Security Measures
 

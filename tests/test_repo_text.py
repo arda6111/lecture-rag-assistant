@@ -40,3 +40,13 @@ def test_no_emoji_in_app_and_docs(path: Path) -> None:
 def test_no_em_dashes_in_docs(path: Path) -> None:
     """Docs use plain punctuation instead of em-dashes."""
     assert "\u2014" not in path.read_text(encoding="utf-8")
+
+
+def test_security_reporting_policy() -> None:
+    """SECURITY.md points to private reporting and contains no email address."""
+    text = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    joined = " ".join(text.split())
+
+    assert "private vulnerability reporting" in text
+    assert "once the repository is public" in joined
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text)
