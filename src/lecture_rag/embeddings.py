@@ -8,6 +8,10 @@ from sentence_transformers import SentenceTransformer
 logger = logging.getLogger(__name__)
 
 
+class EmbeddingModelError(RuntimeError):
+    """Raised when an embedding model cannot be loaded."""
+
+
 class EmbeddingModel:
     """Local embedding model using sentence-transformers."""
 
@@ -16,10 +20,18 @@ class EmbeddingModel:
 
         Args:
             model_name: Name of the sentence-transformers model to use
+
+        Raises:
+            EmbeddingModelError: If the model cannot be loaded
         """
         self.model_name = model_name
         logger.info(f"Loading embedding model: {model_name}")
-        self.model = SentenceTransformer(model_name)
+        try:
+            self.model = SentenceTransformer(model_name)
+        except OSError as e:
+            raise EmbeddingModelError(
+                f"Could not load embedding model {model_name!r}: {e}"
+            ) from e
         dimension = self.model.get_sentence_embedding_dimension()
         if dimension is None:
             raise ValueError(f"Model {model_name!r} did not report an embedding dimension")

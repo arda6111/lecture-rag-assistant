@@ -10,7 +10,7 @@ import click
 from dotenv import find_dotenv, load_dotenv
 
 from .chunking import chunk_documents
-from .embeddings import EmbeddingModel
+from .embeddings import EmbeddingModel, EmbeddingModelError
 from .eval import (
     EVAL_MODES,
     evaluate_retrieval,
@@ -51,8 +51,35 @@ def _load_retriever(index_dir: Path, model: str, retrieval: str | None) -> Retri
     mode = _resolve_retrieval_mode(retrieval)
     try:
         return Retriever.from_index_path(index_dir, model, mode=mode)
+    except EmbeddingModelError as e:
+        raise click.ClickException(str(e)) from e
     except ValueError as e:
         raise click.ClickException(f"{e}. Run `lecture-rag ingest` first.") from e
+
+
+def _validate_output_dir(
+    ctx: click.Context,
+    param: click.Parameter,
+    value: str | None,
+) -> Path | None:
+    """Validate the raw --output value and convert it to a path."""
+    if value is None:
+        return None
+    if value.strip() == "":
+        raise click.BadParameter("must not be empty")
+    return Path(value)
+
+
+def _prepare_output_dir(output: Path) -> None:
+    """Create the output directory and verify that it is writable."""
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise click.ClickException(
+            f"Cannot create output directory {output}: {e.strerror or e}"
+        ) from e
+    if not os.access(output, os.W_OK | os.X_OK):
+        raise click.ClickException(f"Output directory is not writable: {output}")
 
 
 class DotenvGroup(click.Group):
@@ -136,7 +163,10 @@ def ingest(
     chunks = chunk_documents(documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     click.echo(f"Loading embedding model: {model}...")
-    embedding_model = EmbeddingModel(model)
+    try:
+        embedding_model = EmbeddingModel(model)
+    except EmbeddingModelError as e:
+        raise click.ClickException(str(e)) from e
 
     click.echo("Generating embeddings...")
     texts = [doc.text for doc in chunks]
@@ -290,9 +320,13 @@ def ask(
 )
 @click.option(
     "--output",
-    type=click.Path(file_okay=False, path_type=Path),
+    type=click.Path(file_okay=False),
+    callback=_validate_output_dir,
     default=None,
-    help="Write results.json and results.md for all modes to this directory",
+    help=(
+        "Write results.json and results.md for all modes to this directory "
+        "(cannot be combined with --compare or --sweep)"
+    ),
 )
 def eval(
     eval_file: Path,
@@ -306,6 +340,19 @@ def eval(
     output: Path | None,
 ) -> None:
     """Run evaluation on the retrieval system."""
+    if output is not None:
+        if compare or sweep:
+            raise click.UsageError(
+                "--output evaluates all modes and cannot be combined with "
+                "--compare or --sweep"
+            )
+        if retrieval is not None:
+            click.echo(
+                "Warning: --retrieval is ignored with --output; "
+                "all retrieval modes are evaluated.",
+                err=True,
+            )
+
     click.echo(f"Loading evaluation set from {eval_file}...")
     try:
         eval_set = load_eval_set(eval_file)
@@ -314,6 +361,9 @@ def eval(
 
     if not eval_set.questions:
         raise click.ClickException(f"Eval set is empty: {eval_file}")
+
+    if output is not None:
+        _prepare_output_dir(output)
 
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval)
@@ -334,12 +384,16 @@ def eval(
             indexed_chunks=len(retriever.index.documents),
             command=command,
         )
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "results.json").write_text(
-            json.dumps(results, indent=2) + "\n", encoding="utf-8"
-        )
-        markdown = render_markdown(results)
-        (output / "results.md").write_text(markdown, encoding="utf-8")
+        try:
+            (output / "results.json").write_text(
+                json.dumps(results, indent=2) + "\n", encoding="utf-8"
+            )
+            markdown = render_markdown(results)
+            (output / "results.md").write_text(markdown, encoding="utf-8")
+        except OSError as e:
+            raise click.ClickException(
+                f"Could not write results to {output}: {e.strerror or e}"
+            ) from e
         click.echo(markdown)
         click.echo(f"Wrote {output / 'results.json'} and {output / 'results.md'}")
         return
