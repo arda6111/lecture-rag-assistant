@@ -29,6 +29,141 @@
       "question": "What data structure does BFS use for traversal?",
       "expected_file": "algorithms.pdf",
       "expected_page": 2
+    },
+    {
+      "question": "When is dynamic programming applicable to a problem?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "How do memoization and bottom-up construction differ?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "Which classic problems are used as examples of dynamic programming?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "How can dynamic programming change the time complexity of a problem?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What equation gives dynamic programming a mathematical foundation?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "Which traversal would you use to order tasks with dependencies?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "How does breadth-first search find shortest paths?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "What are the networking and social network applications of BFS?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "Which data structure does depth-first search use?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "How are strongly connected components discovered?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "Which algorithm extends BFS to handle weighted graphs?",
+      "expected_file": "algorithms.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "How many edges does a tree with n nodes have?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What is the height of a complete binary tree with n nodes?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What defines a binary tree?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "Where are binary trees used in practice?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 1
+    },
+    {
+      "question": "What is the average-case time complexity of hash table operations?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "How does a hash function map keys to storage locations?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "Which modern hashing techniques improve worst-case behavior?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "Where are hash tables used in software systems?",
+      "expected_file": "data_structures.pdf",
+      "expected_page": 2
+    },
+    {
+      "question": "How does TCP congestion control adjust its window size?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "What is the difference between an inner join and an outer join in SQL?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "What is the Python global interpreter lock and why does it exist?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "How should the pivot be chosen in quicksort?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "How do rotations rebalance a red-black tree?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "What does the CAP theorem state about distributed systems?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "How does the learning rate affect gradient descent?",
+      "expected_file": null,
+      "expected_page": null
+    },
+    {
+      "question": "How does virtual memory paging work?",
+      "expected_file": null,
+      "expected_page": null
     }
   ]
 }
