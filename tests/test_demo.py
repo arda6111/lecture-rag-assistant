@@ -127,7 +127,8 @@ def test_missing_index_shows_not_found(
     app = run_demo()
 
     assert any(
-        "Index directory not found. Run `lecture-rag ingest` first." in error
+        "Index directory not found" in error
+        and "Run `lecture-rag ingest` to build the index." in error
         for error in element_values(app, ("error",))
     )
     assert any(str(missing) in code for code in element_values(app, ("code",)))
@@ -380,7 +381,8 @@ def test_untrusted_index_directory_is_rendered_safely(
     app = run_demo()
 
     assert any(
-        "Index directory not found. Run `lecture-rag ingest` first." in error
+        "Index directory not found" in error
+        and "Run `lecture-rag ingest` to build the index." in error
         for error in element_values(app, ("error",))
     )
     assert_rendered_safely(app, UNTRUSTED)
@@ -476,6 +478,31 @@ def test_invalid_index_error_is_shown(
     finally:
         streamlit.cache_resource.clear()
 
+def test_symlinked_index_shows_real_path_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A symlinked index directory tells the user to use the real path."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    link_path = tmp_path / "linked_index"
+    os.symlink(index_dir, link_path)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(link_path))
+
+    app = run_demo()
+    errors = element_values(app, ("error",))
+
+    assert not app.exception
+    assert any(
+        "Invalid index: the index directory is a symlink. "
+        "Use the real (non-symlink) path of the index directory instead."
+        in error
+        for error in errors
+    )
+    assert not any("Re-run" in error for error in errors)
+    assert any(str(link_path) in code for code in element_values(app, ("code",)))
+
+
 def test_dangling_symlinked_index_shows_symlink_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -486,14 +513,60 @@ def test_dangling_symlinked_index_shows_symlink_error(
     monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(link_path))
 
     app = run_demo()
+    errors = element_values(app, ("error",))
 
     assert not app.exception
     assert any(
         "Invalid index: the index directory is a symlink. "
-        "Re-run `lecture-rag ingest` to rebuild the index." in error
-        for error in element_values(app, ("error",))
+        "Use the real (non-symlink) path of the index directory instead."
+        in error
+        for error in errors
     )
+    assert not any("Re-run" in error for error in errors)
     assert any(str(link_path) in code for code in element_values(app, ("code",)))
+
+
+def test_index_under_symlinked_parent_loads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An index reached through a symlinked parent directory loads without error."""
+    real_parent = tmp_path / "real_parent"
+    real_parent.mkdir()
+    build_demo_index(real_parent / "index")
+    linked_parent = tmp_path / "linked_parent"
+    os.symlink(real_parent, linked_parent)
+    linked_index = linked_parent / "index"
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(linked_index))
+
+    calls: list[Path] = []
+
+    def fake_from_index_path(
+        cls: type[Retriever],
+        index_path: Path,
+        model_name: str = "all-MiniLM-L6-v2",
+        mode: str | None = None,
+        rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
+    ) -> Retriever:
+        calls.append(index_path)
+        return Retriever(HashingEmbeddingModel(), VectorIndex.load(index_path), mode="dense")
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fake_from_index_path),
+    )
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+
+        assert not app.exception
+        assert not app.error
+        assert calls == [linked_index]
+    finally:
+        streamlit.cache_resource.clear()
 
 
 def test_hostile_chunk_and_answer_are_rendered_only_as_text(

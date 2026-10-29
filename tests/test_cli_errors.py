@@ -78,6 +78,25 @@ def test_ingest_empty_directory_fails(runner: CliRunner, tmp_path: Path) -> None
     assert "No PDF documents could be loaded" in result.output
 
 
+@pytest.mark.parametrize("model", ["", "   "])
+def test_ingest_rejects_empty_model(
+    runner: CliRunner,
+    tmp_path: Path,
+    model: str,
+) -> None:
+    """Ingest rejects an empty or whitespace-only model name."""
+    index_dir = tmp_path / "idx"
+
+    result = runner.invoke(
+        main,
+        ["ingest", str(SAMPLE_DIR), "--model", model, "--index-dir", str(index_dir)],
+    )
+
+    assert_clean_failure(result)
+    assert "must not be empty" in result.output
+    assert not index_dir.exists()
+
+
 def test_ingest_only_fake_pdfs_fails(runner: CliRunner, tmp_path: Path) -> None:
     """A directory with only invalid PDFs exits non-zero."""
     fake_dir = tmp_path / "fake"
@@ -552,7 +571,6 @@ def corrupt_index_case(
         "empty_dir",
         "symlinked_faiss",
         "symlinked_documents",
-        "symlinked_dir",
     ],
 )
 def test_ask_rejects_invalid_index_cleanly(
@@ -569,18 +587,53 @@ def test_ask_rejects_invalid_index_cleanly(
     assert_clean_failure(result)
     assert "Re-run `lecture-rag ingest` to rebuild the index." in result.output
 
+
+def test_ask_rejects_symlinked_index_directory_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """A symlinked index directory fails with the real path hint."""
+    link_path = tmp_path / "linked_index"
+    os.symlink(index_dir, link_path)
+
+    result = runner.invoke(main, ["ask", "What is BFS?", "--index-dir", str(link_path)])
+
+    assert_clean_failure(result)
+    assert "Use the real (non-symlink) path" in result.output
+    assert "Re-run" not in result.output
+
+
+def test_ask_accepts_index_under_symlinked_parent(
+    runner: CliRunner,
+    index_dir: Path,
+    tmp_path: Path,
+) -> None:
+    """An index reached through a symlinked parent directory can be queried."""
+    real_parent = tmp_path / "real_parent"
+    real_parent.mkdir()
+    index_dir.rename(real_parent / "index")
+    linked_parent = tmp_path / "linked_parent"
+    os.symlink(real_parent, linked_parent)
+
+    result = runner.invoke(main, ask_args(linked_parent / "index"))
+
+    assert result.exit_code == 0, result.output
+
+
 def test_ask_rejects_dangling_symlinked_index_cleanly(
     runner: CliRunner,
     tmp_path: Path,
 ) -> None:
-    """A dangling symlinked index directory fails with the symlink error."""
+    """A dangling symlinked index directory fails with the real path hint."""
     link_path = tmp_path / "dangling_index"
     os.symlink(tmp_path / "missing_index", link_path)
 
     result = runner.invoke(main, ask_args(link_path))
 
     assert_clean_failure(result)
-    assert "symlink" in result.output
+    assert "Use the real (non-symlink) path" in result.output
+    assert "Re-run" not in result.output
 
 
 @pytest.mark.parametrize("command", ["ask", "eval"])

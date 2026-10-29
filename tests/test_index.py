@@ -134,6 +134,22 @@ def test_save_writes_index_metadata(
     assert metadata == {"model_name": "model-a", "dimension": 384}
 
 
+def test_save_rejects_blank_model_name(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """Saving rejects a model name that is empty or whitespace."""
+    index = VectorIndex(dimension=384, model_name="  ")
+    index.add_documents(sample_documents, sample_embeddings)
+    index_path = temp_dir / "blank_model_index"
+
+    with pytest.raises(ValueError, match="model_name must not be empty or whitespace"):
+        index.save(index_path)
+
+    assert not (index_path / "index_meta.json").exists()
+
+
 def test_load_restores_model_name(
     sample_documents: list[Document],
     sample_embeddings: np.ndarray,
@@ -467,25 +483,26 @@ def test_load_rejects_symlinked_index_directory(
     with pytest.raises(InvalidIndexError, match="symlink") as exc_info:
         VectorIndex.load(link_path)
 
-    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+    message = str(exc_info.value)
+    assert "Use the real (non-symlink) path" in message
+    assert "Re-run" not in message
 
 
-def test_load_rejects_index_under_symlinked_parent(
+def test_load_accepts_index_under_symlinked_parent(
     sample_documents: list[Document],
     sample_embeddings: np.ndarray,
     temp_dir: Path,
 ) -> None:
-    """An index inside a symlinked parent directory is rejected."""
+    """An index inside a symlinked parent directory loads with all documents."""
     real_parent = temp_dir / "real_parent"
     real_parent.mkdir()
     save_test_index(real_parent, sample_documents, sample_embeddings)
     linked_parent = temp_dir / "linked_parent"
     os.symlink(real_parent, linked_parent)
 
-    with pytest.raises(InvalidIndexError, match="contains a symlink") as exc_info:
-        VectorIndex.load(linked_parent / "saved_index")
+    loaded = VectorIndex.load(linked_parent / "saved_index")
 
-    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+    assert len(loaded.documents) == len(sample_documents)
 
 
 def test_load_accepts_path_with_parent_components(

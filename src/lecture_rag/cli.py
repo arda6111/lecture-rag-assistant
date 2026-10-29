@@ -167,6 +167,9 @@ def ingest(
             param_hint="--chunk-overlap",
         )
 
+    if not model.strip():
+        raise click.BadParameter("must not be empty", param_hint="--model")
+
     click.echo(f"Loading PDFs from {input_dir}...")
     documents = load_directory(
         input_dir,

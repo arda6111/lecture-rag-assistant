@@ -3,7 +3,6 @@
 import hashlib
 import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -73,10 +72,9 @@ class HashingEmbeddingModel:
 
 
 @pytest.fixture
-def temp_dir():
-    """Create a temporary directory."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+def temp_dir(tmp_path: Path) -> Path:
+    """Provide a temporary directory."""
+    return tmp_path
 
 
 @pytest.fixture

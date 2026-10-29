@@ -9,7 +9,11 @@ from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import Generator
-from lecture_rag.index import IndexModelMismatchError, InvalidIndexError
+from lecture_rag.index import (
+    INDEX_NOT_FOUND_MESSAGE,
+    IndexModelMismatchError,
+    InvalidIndexError,
+)
 from lecture_rag.retrieval import (
     RetrievalMode,
     Retriever,
@@ -95,16 +99,17 @@ allow_model_mismatch = st.sidebar.checkbox(
 )
 
 index_path = Path(index_dir)
-if index_path.is_symlink():
+abs_index = Path(os.path.abspath(index_dir))
+if abs_index.is_symlink():
     st.error(
         "Invalid index: the index directory is a symlink. "
-        "Re-run `lecture-rag ingest` to rebuild the index."
+        "Use the real (non-symlink) path of the index directory instead."
     )
     st.code(index_dir, language=None)
     st.stop()
 
 if not index_path.exists():
-    st.error("Index directory not found. Run `lecture-rag ingest` first.")
+    st.error(INDEX_NOT_FOUND_MESSAGE)
     st.code(index_dir, language=None)
     st.stop()
 

@@ -14,6 +14,10 @@ from .models import Document
 
 logger = logging.getLogger(__name__)
 
+INDEX_NOT_FOUND_MESSAGE = (
+    "Index directory not found. Run `lecture-rag ingest` to build the index."
+)
+
 
 def normalize_model_name(name: str) -> str:
     """Normalize an embedding model name for comparison.
@@ -248,7 +252,13 @@ class VectorIndex:
 
         Args:
             path: Directory path to save index files
+
+        Raises:
+            ValueError: If the model name is empty or whitespace
         """
+        if self.model_name is not None and not self.model_name.strip():
+            raise ValueError("model_name must not be empty or whitespace")
+
         path.mkdir(parents=True, exist_ok=True)
 
         faiss.write_index(self.index, str(path / "index.faiss"))
@@ -280,11 +290,12 @@ class VectorIndex:
             InvalidIndexError: If the index path or an index file is unsafe,
                 missing or invalid
         """
-        if path.is_symlink():
-            raise _invalid_error(path, "index directory is a symlink")
-
-        if path.resolve() != Path(os.path.normpath(path.absolute())):
-            raise _invalid_error(path, "the index path contains a symlink")
+        abs_path = Path(os.path.abspath(path))
+        if abs_path.is_symlink():
+            raise InvalidIndexError(
+                f"Invalid index at {path}: the index directory is a symlink. "
+                "Use the real (non-symlink) path of the index directory instead."
+            )
 
         if not path.exists():
             raise InvalidIndexError(
