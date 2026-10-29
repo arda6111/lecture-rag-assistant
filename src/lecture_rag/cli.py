@@ -4,13 +4,20 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import click
 from dotenv import find_dotenv, load_dotenv
 
 from .chunking import chunk_documents
 from .embeddings import EmbeddingModel
-from .eval import evaluate_retrieval, load_eval_set, render_markdown, run_full_evaluation
+from .eval import (
+    EVAL_MODES,
+    evaluate_retrieval,
+    load_eval_set,
+    render_markdown,
+    run_full_evaluation,
+)
 from .generation import Generator
 from .index import VectorIndex
 from .pdf_loader import load_directory
@@ -51,7 +58,7 @@ def _load_retriever(index_dir: Path, model: str, retrieval: str | None) -> Retri
 class DotenvGroup(click.Group):
     """Click group that loads .env before parsing any command."""
 
-    def main(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def main(self, *args: Any, **kwargs: Any) -> Any:
         load_dotenv(find_dotenv(usecwd=True))
         return super().main(*args, **kwargs)
 
@@ -338,6 +345,7 @@ def eval(
         return
 
     if sweep:
+        sweep_mode: RetrievalMode = "dense"
         click.echo(f"Sweeping abstain thresholds on {len(eval_set.questions)} questions...")
         click.echo("")
         click.echo("| Threshold | Abstain acc |")
@@ -349,7 +357,7 @@ def eval(
                 eval_set,
                 k=k,
                 abstain_threshold=threshold,
-                mode="dense",
+                mode=sweep_mode,
             )
             click.echo(f"| {threshold:.2f} | {metrics['abstain_accuracy']:.3f} |")
         return
@@ -359,7 +367,7 @@ def eval(
         click.echo("")
         click.echo(f"| Mode | Hit@{k} | MRR@{k} | Abstain acc |")
         click.echo("|------|-------|-------|-------------|")
-        for mode_name in ["dense", "bm25", "hybrid"]:
+        for mode_name in EVAL_MODES:
             metrics = evaluate_retrieval(
                 retriever,
                 eval_set,

@@ -175,6 +175,7 @@ class Generator:
         if mode not in ("llm", "extractive"):
             raise ValueError(f"Unknown generation mode: {mode!r}")
 
+        provider: GenerationProvider
         if mode == "extractive":
             provider = ExtractiveFallbackProvider()
         else:

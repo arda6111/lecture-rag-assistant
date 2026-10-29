@@ -22,7 +22,7 @@ class VectorIndex:
             dimension: Dimensionality of the embeddings
         """
         self.dimension = dimension
-        self.index = faiss.IndexFlatIP(dimension)
+        self.index: faiss.Index = faiss.IndexFlatIP(dimension)
         self.documents: list[Document] = []
 
     def add_documents(self, documents: list[Document], embeddings: np.ndarray) -> None:

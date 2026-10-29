@@ -20,7 +20,10 @@ class EmbeddingModel:
         self.model_name = model_name
         logger.info(f"Loading embedding model: {model_name}")
         self.model = SentenceTransformer(model_name)
-        self.dimension = self.model.get_sentence_embedding_dimension()
+        dimension = self.model.get_sentence_embedding_dimension()
+        if dimension is None:
+            raise ValueError(f"Model {model_name!r} did not report an embedding dimension")
+        self.dimension: int = dimension
         logger.info(f"Model loaded, dimension: {self.dimension}")
 
     def embed_texts(self, texts: list[str], show_progress: bool = True) -> np.ndarray:
