@@ -83,6 +83,8 @@ lecture-rag ingest data/sample_lectures
 
 This creates a local index in the `index/` directory.
 
+`ingest` writes `index_meta.json` with the embedding model name and vector dimension; indexes from older versions without it still load and are only checked by dimension; querying with a different model is an error and needs a re-ingest with that model, unless you pass `--allow-model-mismatch`.
+
 2. **Ask questions**:
 
 ```bash
@@ -148,6 +150,7 @@ lecture-rag ask "your question" [OPTIONS]
 Options:
 - `--index-dir PATH`: Index directory (default: `index`)
 - `--model NAME`: Embedding model, must match ingest model
+- `--allow-model-mismatch`: Continue with a warning when `--model` differs from the model the index was built with
 - `--k INT`: Number of sources to retrieve, at least 1 (default: 5)
 - `--mode {llm|extractive}`: Answer generation mode (default: `extractive`)
 - `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
@@ -174,6 +177,7 @@ Options:
 - `--eval-file PATH`: Evaluation JSON file (default: `eval/eval_set.json`)
 - `--index-dir PATH`: Index directory (default: `index`)
 - `--model NAME`: Embedding model
+- `--allow-model-mismatch`: Continue with a warning when `--model` differs from the model the index was built with
 - `--k INT`: Number of documents for metrics, at least 1 (default: 5)
 - `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
 - `--compare`: Evaluate and compare dense, bm25, and hybrid retrieval
