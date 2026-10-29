@@ -10,6 +10,8 @@ A Retrieval-Augmented Generation (RAG) system for university lecture materials. 
 
 ## Local Quickstart
 
+On a machine without a GPU, first run `pip install torch --index-url https://download.pytorch.org/whl/cpu` to get the smaller CPU-only PyTorch build, then continue with `pip install -e .`.
+
 ```bash
 pip install -e .
 lecture-rag ingest data/corpus --index-dir index-corpus
@@ -454,11 +456,13 @@ The index stores chunk metadata as `documents.json` instead of pickle. Indexes b
 
 Only load indexes you built yourself. `index.faiss` is a native binary format parsed by FAISS, and a crafted file can be unsafe. The loader rejects symlinks and invalid files, but it cannot make untrusted FAISS files safe.
 
-CI runs `bandit` and `pip-audit`. Dependabot is enabled. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+CI runs `bandit`, `pip-audit` and `gitleaks` (a scan of the full git history). Dependabot is enabled. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+The PDFs in `data/corpus/` are not covered by the MIT license: they are licensed under CC BY 4.0 by their original authors. See [data/SOURCES.md](data/SOURCES.md) for titles, authors, sources and licenses.
 
 ## Contributing
 

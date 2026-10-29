@@ -56,3 +56,20 @@ def test_security_docs_warn_about_untrusted_faiss_files() -> None:
     for name in ("SECURITY.md", "README.md"):
         text = (REPO_ROOT / name).read_text(encoding="utf-8").lower()
         assert phrase in text
+
+
+def test_streamlit_toolbar_is_minimal() -> None:
+    """The Streamlit config hides the Deploy button and the developer menu."""
+    import tomllib
+
+    config = tomllib.loads((REPO_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+
+    assert config["client"]["toolbarMode"] == "minimal"
+
+
+def test_readme_states_corpus_license() -> None:
+    """The README says the corpus PDFs are CC BY 4.0, not MIT."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "CC BY 4.0 by their original authors" in readme
+    assert "(data/SOURCES.md)" in readme
