@@ -1,5 +1,6 @@
 """Tests for vector index functionality."""
 
+import json
 
 import numpy as np
 import pytest
@@ -82,3 +83,23 @@ def test_save_and_load(
     assert loaded_index.dimension == 384
     assert len(loaded_index.documents) == 3
     assert loaded_index.documents[0].text == sample_documents[0].text
+
+
+def test_load_rejects_document_count_mismatch(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir,
+) -> None:
+    """Loading fails when documents.json does not match the FAISS index size."""
+    index = VectorIndex(dimension=384)
+    index.add_documents(sample_documents, sample_embeddings)
+
+    index_path = temp_dir / "mismatched_index"
+    index.save(index_path)
+
+    docs_path = index_path / "documents.json"
+    documents = json.loads(docs_path.read_text(encoding="utf-8"))
+    docs_path.write_text(json.dumps(documents[:-1]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match"):
+        VectorIndex.load(index_path)

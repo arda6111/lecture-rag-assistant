@@ -106,6 +106,12 @@ class VectorIndex:
         with open(docs_path, encoding="utf-8") as f:
             documents = [Document.model_validate(item) for item in json.load(f)]
 
+        if len(documents) != faiss_index.ntotal:
+            raise ValueError(
+                f"Document count {len(documents)} does not match index size "
+                f"{faiss_index.ntotal} in {path}"
+            )
+
         vector_index = cls(faiss_index.d)
         vector_index.index = faiss_index
         vector_index.documents = documents
