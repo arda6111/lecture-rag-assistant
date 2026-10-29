@@ -25,13 +25,14 @@ DEFAULT_ABSTAIN_THRESHOLD = 0.35
 
 
 def parse_abstain_threshold(raw: str | None) -> float:
-    """Parse, clamp, and round an abstain threshold.
+    """Parse and round an abstain threshold.
 
     Args:
         raw: Raw threshold value from the environment
 
     Returns:
-        Threshold clamped to [0.0, 1.0] and rounded to the nearest 0.05
+        Threshold rounded to the nearest 0.05 when it is in [0.0, 1.0],
+        otherwise the default threshold
     """
     if raw is None or not raw.strip():
         return DEFAULT_ABSTAIN_THRESHOLD
@@ -54,8 +55,15 @@ def parse_abstain_threshold(raw: str | None) -> float:
         )
         return DEFAULT_ABSTAIN_THRESHOLD
 
-    clamped = min(max(value, 0.0), 1.0)
-    return round(round(clamped / 0.05) * 0.05, 2)
+    if value < 0.0 or value > 1.0:
+        logger.warning(
+            "LECTURE_RAG_ABSTAIN_THRESHOLD=%r is outside [0, 1], using %.2f",
+            raw,
+            DEFAULT_ABSTAIN_THRESHOLD,
+        )
+        return DEFAULT_ABSTAIN_THRESHOLD
+
+    return round(round(value / 0.05) * 0.05, 2)
 
 
 def default_retrieval_mode() -> RetrievalMode:
@@ -173,19 +181,6 @@ class Retriever:
             self._bm25_index = BM25Index(self.index.documents)
         return self._bm25_index
 
-    def _dense_search(self, query: str, k: int) -> list[tuple[Document, float]]:
-        """Run dense vector search.
-
-        Args:
-            query: Query string
-            k: Number of results
-
-        Returns:
-            List of (document, score) tuples
-        """
-        query_embedding = self.embedding_model.embed_query(query)
-        return self.index.search(query_embedding, k=k)
-
     def max_dense_similarity(self, query: str, k: int = 5) -> float:
         """Return the top dense cosine similarity for a query.
 
@@ -199,10 +194,7 @@ class Retriever:
         Returns:
             Highest cosine similarity, or 0.0 if the index is empty
         """
-        results = self._dense_search(query, k=k)
-        if not results:
-            return 0.0
-        return max(float(score) for _, score in results)
+        return self.search(query, k=k, mode="dense").max_dense_similarity
 
     def should_abstain(self, query: str, threshold: float) -> bool:
         """Decide whether to abstain from answering a query.
@@ -214,7 +206,7 @@ class Retriever:
         Returns:
             True if the top dense similarity is below the threshold
         """
-        return self.max_dense_similarity(query) < threshold
+        return self.search(query, mode="dense").should_abstain(threshold)
 
     def search(
         self,

@@ -1,5 +1,6 @@
 """Tests for retrieval modes and reciprocal rank fusion."""
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,19 @@ class FakeEmbeddingModel:
     def embed_query(self, query: str) -> np.ndarray:
         """Return a fixed query vector."""
         return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+
+class CountingEmbeddingModel(HashingEmbeddingModel):
+    """Hashing embedding model that counts query embeddings."""
+
+    def __init__(self, model_name: str = "counting") -> None:
+        super().__init__(model_name)
+        self.query_calls = 0
+
+    def embed_query(self, query: str) -> np.ndarray:
+        """Count and embed a query."""
+        self.query_calls += 1
+        return super().embed_query(query)
 
 
 def make_document(chunk_id: str, text: str) -> Document:
@@ -198,19 +212,55 @@ def test_retrieve_invalid_mode_override_raises(
     assert retriever.mode == "dense"
 
 
+def test_abstain_helpers_use_one_dense_search() -> None:
+    """The abstain helpers embed once and never build the BM25 index."""
+    documents = load_directory(REPO_ROOT / "data" / "sample_lectures")
+    chunks = chunk_documents(documents)
+    model = CountingEmbeddingModel()
+    index = VectorIndex(model.dimension)
+    index.add_documents(chunks, model.embed_texts([chunk.text for chunk in chunks]))
+    retriever = Retriever(model, index, mode="bm25")
+
+    retriever.max_dense_similarity("What is dynamic programming?")
+
+    assert model.query_calls == 1
+    assert retriever._bm25_index is None
+
+    retriever.should_abstain("What is dynamic programming?", 0.5)
+
+    assert model.query_calls == 2
+    assert retriever._bm25_index is None
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
         ("0.37", 0.35),
-        ("1.7", 1.0),
-        ("-2", 0.0),
+        ("1.7", DEFAULT_ABSTAIN_THRESHOLD),
+        ("-2", DEFAULT_ABSTAIN_THRESHOLD),
+        ("5", DEFAULT_ABSTAIN_THRESHOLD),
+        ("-1", DEFAULT_ABSTAIN_THRESHOLD),
+        ("0", 0.0),
+        ("1", 1.0),
         ("abc", DEFAULT_ABSTAIN_THRESHOLD),
         (None, DEFAULT_ABSTAIN_THRESHOLD),
     ],
 )
 def test_parse_abstain_threshold(raw: str | None, expected: float) -> None:
-    """Abstain thresholds are clamped, rounded, and validated."""
+    """Abstain thresholds are rounded or rejected when out of range."""
     assert parse_abstain_threshold(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["1.7", "-2", "5", "-1"])
+def test_parse_abstain_threshold_warns_outside_range(
+    raw: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Finite out-of-range thresholds log a warning and use the default."""
+    with caplog.at_level(logging.WARNING):
+        assert parse_abstain_threshold(raw) == DEFAULT_ABSTAIN_THRESHOLD
+
+    assert f"LECTURE_RAG_ABSTAIN_THRESHOLD={raw!r} is outside [0, 1]" in caplog.text
 
 
 def build_sample_index() -> tuple[HashingEmbeddingModel, VectorIndex]:
