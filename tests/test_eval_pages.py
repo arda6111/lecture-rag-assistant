@@ -94,6 +94,40 @@ def test_eval_question_rejects_invalid_expected_pages(fields: dict[str, object])
         EvalQuestion(question="q", **fields)
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"expected_file": "a.pdf", "expected_pages": ["2"]},
+        {"expected_file": "a.pdf", "expected_pages": [2.0]},
+        {"expected_file": "a.pdf", "expected_pages": [True]},
+        {"expected_file": "a.pdf", "expected_page": "2"},
+        {"expected_file": "a.pdf", "expected_page": 2.0},
+        {"expected_file": "a.pdf", "expected_page": True},
+        {"expected_file": "", "expected_page": 1},
+    ],
+)
+def test_eval_question_rejects_non_integer_pages_and_empty_file(
+    fields: dict[str, object],
+) -> None:
+    """Pages must be real integers and the expected file must not be empty."""
+    with pytest.raises(ValidationError):
+        EvalQuestion(question="q", **fields)
+
+
+@pytest.mark.parametrize("pages", ['["2"]', "[2.0]", "[true]"])
+def test_load_eval_set_rejects_non_integer_pages_in_json(tmp_path: Path, pages: str) -> None:
+    """A JSON eval file with a string, float or boolean page is invalid."""
+    path = tmp_path / "eval.json"
+    path.write_text(
+        '{"questions": [{"question": "q", "expected_file": "a.pdf", '
+        f'"expected_pages": {pages}}}]}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Invalid eval file"):
+        load_eval_set(path)
+
+
 def test_existing_eval_set_still_loads_with_same_counts() -> None:
     """The bundled sample eval set keeps working with expected_page."""
     eval_set = load_eval_set(REPO_ROOT / "eval" / "eval_set.json")

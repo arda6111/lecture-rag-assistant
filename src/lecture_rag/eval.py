@@ -3,9 +3,9 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ValidationError, model_validator
+from pydantic import BaseModel, Field, StrictInt, ValidationError, model_validator
 
 from .retrieval import RetrievalMode, Retriever
 
@@ -16,9 +16,9 @@ class EvalQuestion(BaseModel):
     """An evaluation question with an optional expected source."""
 
     question: str
-    expected_file: str | None = None
-    expected_page: int | None = None
-    expected_pages: list[int] | None = None
+    expected_file: Annotated[str, Field(min_length=1)] | None = None
+    expected_page: StrictInt | None = None
+    expected_pages: list[StrictInt] | None = None
 
     @model_validator(mode="after")
     def _validate_expected_pages(self) -> "EvalQuestion":

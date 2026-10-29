@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+from collections import Counter
 from pathlib import Path
 
 import fitz
@@ -52,6 +53,9 @@ def test_corpus_eval_set_is_valid() -> None:
     assert 40 <= len(eval_set.questions) <= 60
     assert 8 <= len(unanswerable) <= 12
     assert len({question.question for question in eval_set.questions}) == len(eval_set.questions)
+
+    per_pdf = Counter(question.expected_file for question in answerable)
+    assert per_pdf == {pdf.name: 8 for pdf in CORPUS_DIR.glob("*.pdf")}
 
     for question in answerable:
         assert question.expected_file is not None
