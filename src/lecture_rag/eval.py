@@ -91,10 +91,8 @@ def evaluate_retrieval(
     abstain_true_negatives = 0
 
     for question in eval_set.questions:
-        if mode is None:
-            results = retriever.retrieve(question.question, k=k)
-        else:
-            results = retriever.retrieve(question.question, k=k, mode=mode)
+        outcome = retriever.search(question.question, k=k, mode=mode)
+        results = outcome.results
 
         found_rank = None
         for rank, result in enumerate(results, 1):
@@ -111,7 +109,7 @@ def evaluate_retrieval(
 
         abstained = False
         if abstain_threshold is not None:
-            abstained = retriever.should_abstain(question.question, abstain_threshold)
+            abstained = outcome.should_abstain(abstain_threshold)
             if question.answerable:
                 if abstained:
                     abstain_false_positives += 1
@@ -175,3 +173,4 @@ def evaluate_retrieval(
         )
 
     return metrics
+

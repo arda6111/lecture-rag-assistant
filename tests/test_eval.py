@@ -8,7 +8,7 @@ import pytest
 from lecture_rag.eval import EvalQuestion, EvalSet, evaluate_retrieval, load_eval_set
 from lecture_rag.index import VectorIndex
 from lecture_rag.models import Document, RetrievalResult
-from lecture_rag.retrieval import DEFAULT_ABSTAIN_THRESHOLD, Retriever
+from lecture_rag.retrieval import DEFAULT_ABSTAIN_THRESHOLD, RetrievalOutcome, Retriever
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +41,14 @@ class StubRetriever:
     def should_abstain(self, query: str, threshold: float) -> bool:
         """Abstain when the configured similarity is below the threshold."""
         return self.similarities[query] < threshold
+
+    def search(self, query: str, k: int = 5, mode: str | None = None) -> RetrievalOutcome:
+        """Return configured results with the configured dense similarity."""
+        return RetrievalOutcome(
+            results=self.retrieve(query, k=k),
+            max_dense_similarity=self.similarities[query],
+            mode=mode or "dense",
+        )
 
 
 def make_document(file_name: str, page_number: int, chunk_id: str) -> Document:

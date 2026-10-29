@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from pydantic import BaseModel
+
 from .bm25 import BM25Index
 from .index import VectorIndex
-from .models import Document, RetrievalResult
+from .models import Document, RetrievalResult, ScoreType
 
 if TYPE_CHECKING:
     from .embeddings import EmbeddingModel
@@ -117,6 +119,18 @@ def reciprocal_rank_fusion(
     return fused
 
 
+class RetrievalOutcome(BaseModel):
+    """Results of one search together with the dense abstain signal."""
+
+    results: list[RetrievalResult]
+    max_dense_similarity: float
+    mode: RetrievalMode
+
+    def should_abstain(self, threshold: float) -> bool:
+        """Return True if the best dense similarity is below the threshold."""
+        return self.max_dense_similarity < threshold
+
+
 class Retriever:
     """Retriever combining dense, sparse, and hybrid search."""
 
@@ -202,6 +216,65 @@ class Retriever:
         """
         return self.max_dense_similarity(query) < threshold
 
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        mode: RetrievalMode | None = None,
+    ) -> RetrievalOutcome:
+        """Search once and return results plus the dense abstain signal.
+
+        The query is embedded once. The dense results are reused for the
+        abstain signal, for dense mode and for hybrid fusion.
+
+        Args:
+            query: Query string
+            k: Number of documents to retrieve
+            mode: Optional retrieval mode that overrides the instance mode
+
+        Returns:
+            RetrievalOutcome with results sorted by score descending
+        """
+        active_mode = self.mode if mode is None else normalize_mode(mode)
+        candidate_k = max(k * 4, 20)
+
+        query_embedding = self.embedding_model.embed_query(query)
+        dense_k = candidate_k if active_mode == "hybrid" else max(k, 1)
+        dense = self.index.search(query_embedding, k=dense_k)
+        max_similarity = max((float(score) for _, score in dense), default=0.0)
+
+        if k <= 0:
+            return RetrievalOutcome(
+                results=[], max_dense_similarity=max_similarity, mode=active_mode
+            )
+
+        score_type: ScoreType
+        if active_mode == "dense":
+            results = dense[:k]
+            score_type = "cosine"
+        elif active_mode == "bm25":
+            results = self._get_bm25_index().search(query, k)
+            score_type = "bm25"
+        else:
+            dense_documents = [document for document, _ in dense]
+            bm25_documents = [
+                document for document, _ in self._get_bm25_index().search(query, candidate_k)
+            ]
+            results = reciprocal_rank_fusion(
+                [dense_documents, bm25_documents],
+                k=self.rrf_k,
+            )[:k]
+            score_type = "rrf"
+
+        return RetrievalOutcome(
+            results=[
+                RetrievalResult(document=document, score=score, score_type=score_type)
+                for document, score in results
+            ],
+            max_dense_similarity=max_similarity,
+            mode=active_mode,
+        )
+
     def retrieve(
         self,
         query: str,
@@ -218,32 +291,7 @@ class Retriever:
         Returns:
             List of RetrievalResult objects, sorted by score descending
         """
-        if k <= 0:
-            return []
-
-        active_mode = self.mode if mode is None else normalize_mode(mode)
-
-        if active_mode == "dense":
-            results = self._dense_search(query, k)
-        elif active_mode == "bm25":
-            results = self._get_bm25_index().search(query, k)
-        else:
-            candidate_k = max(k * 4, 20)
-            dense_documents = [
-                document for document, _ in self._dense_search(query, candidate_k)
-            ]
-            bm25_documents = [
-                document for document, _ in self._get_bm25_index().search(query, candidate_k)
-            ]
-            results = reciprocal_rank_fusion(
-                [dense_documents, bm25_documents],
-                k=self.rrf_k,
-            )[:k]
-
-        return [
-            RetrievalResult(document=document, score=score)
-            for document, score in results
-        ]
+        return self.search(query, k=k, mode=mode).results
 
     @classmethod
     def from_index_path(
