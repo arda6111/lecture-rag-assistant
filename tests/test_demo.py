@@ -7,7 +7,11 @@ import pytest
 streamlit = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from lecture_rag.index import IndexModelMismatchError, VectorIndex  # noqa: E402
+from lecture_rag.index import (  # noqa: E402
+    IndexMetadataError,
+    IndexModelMismatchError,
+    VectorIndex,
+)
 from lecture_rag.models import Document  # noqa: E402
 from lecture_rag.retrieval import Retriever  # noqa: E402
 from tests.conftest import HashingEmbeddingModel  # noqa: E402
@@ -31,11 +35,11 @@ def test_invalid_retrieval_mode_shows_configuration_error(
     app = run_demo()
     errors = [str(element.value) for element in app.error]
 
-    assert any("LECTURE_RAG_RETRIEVAL_MODE" in error for error in errors)
+    assert any("LECTURE\\_RAG\\_RETRIEVAL\\_MODE" in error for error in errors)
     assert not any("Failed to load index" in error for error in errors)
-    assert app.selectbox[1].value == "dense"
+    assert app.selectbox(key="retrieval_mode").value == "dense"
 
-    app.selectbox[1].set_value("bm25")
+    app.selectbox(key="retrieval_mode").set_value("bm25")
     app.run()
 
     assert not app.exception
@@ -71,6 +75,18 @@ def build_demo_index(path: Path) -> None:
             page_number=2,
             chunk_id="data_structures.pdf_page_2",
         ),
+        Document(
+            text="Binary search trees keep keys in sorted order.",
+            file_name="data_structures.pdf",
+            page_number=3,
+            chunk_id="data_structures.pdf_page_3",
+        ),
+        Document(
+            text="Graphs are traversed with breadth-first or depth-first search.",
+            file_name="graphs.pdf",
+            page_number=1,
+            chunk_id="graphs.pdf_page_1",
+        ),
     ]
     index = VectorIndex(model.dimension, model_name=model.model_name)
     index.add_documents(documents, model.embed_texts([doc.text for doc in documents]))
@@ -94,6 +110,7 @@ def test_retriever_cache_does_not_depend_on_retrieval_mode(
         model_name: str = "all-MiniLM-L6-v2",
         mode: str | None = None,
         rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
     ) -> Retriever:
         calls.append(index_path)
         return Retriever(HashingEmbeddingModel(), VectorIndex.load(index_path), mode="dense")
@@ -110,13 +127,18 @@ def test_retriever_cache_does_not_depend_on_retrieval_mode(
         assert not app.exception
         assert len(calls) == 1
 
-        app.selectbox[1].set_value("bm25")
+        app.text_input(key="query").set_value("What is dynamic programming?")
+        app.selectbox(key="retrieval_mode").set_value("bm25")
         app.run()
         assert not app.exception
+        assert not app.error
+        assert any("Sources" in str(element.value) for element in app.subheader)
 
-        app.selectbox[1].set_value("hybrid")
+        app.selectbox(key="retrieval_mode").set_value("hybrid")
         app.run()
         assert not app.exception
+        assert not app.error
+        assert any("Sources" in str(element.value) for element in app.subheader)
 
         assert len(calls) == 1
     finally:
@@ -138,8 +160,9 @@ def test_model_index_mismatch_shows_specific_error(
         model_name: str = "all-MiniLM-L6-v2",
         mode: str | None = None,
         rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
     ) -> Retriever:
-        raise IndexModelMismatchError("x")
+        raise IndexModelMismatchError("model **x**")
 
     monkeypatch.setattr(
         Retriever,
@@ -153,6 +176,92 @@ def test_model_index_mismatch_shows_specific_error(
         errors = [str(element.value) for element in app.error]
 
         assert any("Model and index do not match" in error for error in errors)
+        assert any("\\*\\*x\\*\\*" in error for error in errors)
+        assert not any("Failed to load index" in error for error in errors)
+    finally:
+        streamlit.cache_resource.clear()
+
+
+def test_model_warning_is_shown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An allowed model mismatch shows a warning and continues."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+
+    def fake_from_index_path(
+        cls: type[Retriever],
+        index_path: Path,
+        model_name: str = "all-MiniLM-L6-v2",
+        mode: str | None = None,
+        rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
+    ) -> Retriever:
+        retriever = Retriever(
+            HashingEmbeddingModel(),
+            VectorIndex.load(index_path),
+            mode="dense",
+        )
+        retriever.model_warning = "differs"
+        return retriever
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fake_from_index_path),
+    )
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        app.checkbox(key="allow_model_mismatch").set_value(True)
+        app.run()
+
+        warnings = [str(element.value) for element in app.warning]
+
+        assert any("differs" in warning for warning in warnings)
+        assert not app.error
+    finally:
+        streamlit.cache_resource.clear()
+
+
+def test_index_metadata_error_is_shown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Invalid index metadata is reported distinctly from other failures."""
+    index_dir = tmp_path / "index"
+    index_dir.mkdir()
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    message = (
+        "Invalid index metadata in x: bad. "
+        "Re-run `lecture-rag ingest` to rebuild the index."
+    )
+
+    def fake_from_index_path(
+        cls: type[Retriever],
+        index_path: Path,
+        model_name: str = "all-MiniLM-L6-v2",
+        mode: str | None = None,
+        rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
+    ) -> Retriever:
+        raise IndexMetadataError(message)
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fake_from_index_path),
+    )
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        errors = [str(element.value) for element in app.error]
+
+        assert any("Invalid index metadata" in error for error in errors)
         assert not any("Failed to load index" in error for error in errors)
     finally:
         streamlit.cache_resource.clear()
