@@ -142,13 +142,23 @@ def test_output_write_error_is_reported(
 ) -> None:
     """A write failure is reported as a clean Click error."""
     out_dir = tmp_path / "out"
+    original_write_text = Path.write_text
 
-    def fail_write(*args: object, **kwargs: object) -> str:
-        raise PermissionError("denied")
+    def fail_write(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        if path.parent == out_dir:
+            raise PermissionError("denied")
+        return original_write_text(path, data, encoding=encoding, errors=errors, newline=newline)
 
-    monkeypatch.setattr("pathlib.Path.write_text", fail_write)
+    monkeypatch.setattr(Path, "write_text", fail_write)
 
     result = runner.invoke(main, eval_args(index_dir, "--output", str(out_dir)))
 
     assert_clean_failure(result)
     assert "Could not write results" in result.output
+    assert not (out_dir / "results.json").exists()
