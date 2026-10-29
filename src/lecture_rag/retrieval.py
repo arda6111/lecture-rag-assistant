@@ -18,6 +18,8 @@ RetrievalMode = Literal["dense", "bm25", "hybrid"]
 
 VALID_MODES: frozenset[str] = frozenset({"dense", "bm25", "hybrid"})
 
+DEFAULT_ABSTAIN_THRESHOLD = 0.35
+
 
 def normalize_mode(mode: str) -> RetrievalMode:
     """Validate and normalize a retrieval mode.
@@ -122,6 +124,36 @@ class Retriever:
         """
         query_embedding = self.embedding_model.embed_query(query)
         return self.index.search(query_embedding, k=k)
+
+    def max_dense_similarity(self, query: str, k: int = 5) -> float:
+        """Return the top dense cosine similarity for a query.
+
+        The abstain signal always uses dense cosine similarity because BM25
+        and RRF scores are not on a comparable scale.
+
+        Args:
+            query: Query string
+            k: Number of dense results to consider
+
+        Returns:
+            Highest cosine similarity, or 0.0 if the index is empty
+        """
+        results = self._dense_search(query, k=k)
+        if not results:
+            return 0.0
+        return max(float(score) for _, score in results)
+
+    def should_abstain(self, query: str, threshold: float) -> bool:
+        """Decide whether to abstain from answering a query.
+
+        Args:
+            query: Query string
+            threshold: Minimum dense cosine similarity required to answer
+
+        Returns:
+            True if the top dense similarity is below the threshold
+        """
+        return self.max_dense_similarity(query) < threshold
 
     def retrieve(self, query: str, k: int = 5) -> list[RetrievalResult]:
         """Retrieve the top k documents for a query.
