@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint-and-test:
@@ -71,6 +73,8 @@ jobs:
           pip-audit --skip-editable
 
   test-macos:
+    # macOS runners are slow to start, so this job only runs on demand and for release tags.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: macos-latest
     timeout-minutes: 30
     steps:

@@ -4,6 +4,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_FILE = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
@@ -34,9 +36,36 @@ def test_every_job_has_a_timeout() -> None:
         assert "timeout-minutes:" in block
 
 
-def test_ci_runs_on_macos() -> None:
-    """At least one CI job runs on macOS."""
-    assert "runs-on: macos-latest" in CI_FILE.read_text(encoding="utf-8")
+def _job_block(name: str) -> str:
+    """Return the text of one job in the CI workflow."""
+    jobs_section = CI_FILE.read_text(encoding="utf-8").split("\njobs:", 1)[1]
+    matches = list(re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):\s*$", jobs_section))
+    for index, match in enumerate(matches):
+        if match.group(1) == name:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(jobs_section)
+            return jobs_section[match.start() : end]
+    raise AssertionError(f"job {name} not found")
+
+
+def test_macos_job_runs_only_on_demand_or_for_tags() -> None:
+    """The macOS job exists but only runs on manual dispatch or release tags."""
+    text = CI_FILE.read_text(encoding="utf-8")
+    on_section = text.split("\njobs:", 1)[0]
+    block = _job_block("test-macos")
+
+    assert "workflow_dispatch:" in on_section
+    assert "runs-on: macos-latest" in block
+    assert "github.event_name == 'workflow_dispatch'" in block
+    assert "startsWith(github.ref, 'refs/tags/')" in block
+
+
+@pytest.mark.parametrize("name", ["lint-and-test", "security"])
+def test_linux_jobs_run_on_every_push_and_pull_request(name: str) -> None:
+    """The Linux jobs have no condition, so they run for every push and pull request."""
+    block = _job_block(name)
+
+    assert "runs-on: ubuntu-latest" in block
+    assert "\n    if:" not in block
 
 
 def test_mypy_covers_demo_and_scripts() -> None:
