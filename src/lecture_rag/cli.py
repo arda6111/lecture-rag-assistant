@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import click
+from dotenv import find_dotenv, load_dotenv
 
 from .chunking import chunk_documents
 from .embeddings import EmbeddingModel
@@ -12,7 +13,7 @@ from .eval import evaluate_retrieval, load_eval_set
 from .generation import Generator
 from .index import VectorIndex
 from .pdf_loader import load_directory
-from .retrieval import DEFAULT_ABSTAIN_THRESHOLD, Retriever
+from .retrieval import Retriever, parse_abstain_threshold
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -20,21 +21,18 @@ logger = logging.getLogger(__name__)
 
 def _default_abstain_threshold() -> float:
     """Read the default abstain threshold from the environment."""
-    raw_value = os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")
-    if raw_value is None or not raw_value.strip():
-        return DEFAULT_ABSTAIN_THRESHOLD
-    try:
-        return float(raw_value)
-    except ValueError:
-        logger.warning(
-            "Invalid LECTURE_RAG_ABSTAIN_THRESHOLD=%r, using %.2f",
-            raw_value,
-            DEFAULT_ABSTAIN_THRESHOLD,
-        )
-        return DEFAULT_ABSTAIN_THRESHOLD
+    return parse_abstain_threshold(os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD"))
 
 
-@click.group()
+class DotenvGroup(click.Group):
+    """Click group that loads .env before parsing any command."""
+
+    def main(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        load_dotenv(find_dotenv(usecwd=True))
+        return super().main(*args, **kwargs)
+
+
+@click.group(cls=DotenvGroup)
 def main() -> None:
     """Lecture RAG Assistant - Retrieval-Augmented Generation for university lectures."""
     pass
@@ -67,13 +65,13 @@ def main() -> None:
 )
 @click.option(
     "--max-file-size-mb",
-    type=float,
+    type=click.FloatRange(min=0, min_open=True),
     default=None,
     help="Maximum PDF file size in MB (default: LECTURE_RAG_MAX_FILE_SIZE_MB or 50)",
 )
 @click.option(
     "--max-pages",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help="Maximum pages per PDF (default: LECTURE_RAG_MAX_PAGES or 500)",
 )
@@ -263,7 +261,6 @@ def eval(
     retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
 
     if sweep:
-        retriever.set_mode("dense")
         click.echo(f"Sweeping abstain thresholds on {len(eval_set.questions)} questions...")
         click.echo("")
         click.echo("| Threshold | Abstain acc |")
@@ -275,6 +272,7 @@ def eval(
                 eval_set,
                 k=k,
                 abstain_threshold=threshold,
+                mode="dense",
             )
             click.echo(f"| {threshold:.2f} | {metrics['abstain_accuracy']:.3f} |")
         return
@@ -285,12 +283,12 @@ def eval(
         click.echo(f"| Mode | Hit@{k} | MRR@{k} | Abstain acc |")
         click.echo("|------|-------|-------|-------------|")
         for mode_name in ["dense", "bm25", "hybrid"]:
-            retriever.set_mode(mode_name)
             metrics = evaluate_retrieval(
                 retriever,
                 eval_set,
                 k=k,
                 abstain_threshold=abstain_threshold,
+                mode=mode_name,
             )
             click.echo(
                 f"| {mode_name} | {metrics[f'hit_at_{k}']:.3f} | "
