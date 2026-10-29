@@ -4,11 +4,24 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 #### Retrieval mode comparison
 
-| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
-|------|-------|-------|-------|-------|
-| dense | 0.917 | 0.754 | 0.625 | 0.625 |
-| bm25 | 0.958 | 0.837 | 0.750 | 0.750 |
-| hybrid | 0.938 | 0.819 | 0.729 | 0.729 |
+| Mode | Rerank | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
+|------|--------|-------|-------|-------|-------|
+| dense | no | 0.917 | 0.754 | 0.625 | 0.625 |
+| dense | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+| bm25 | no | 0.958 | 0.837 | 0.750 | 0.750 |
+| bm25 | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+| hybrid | no | 0.938 | 0.819 | 0.729 | 0.729 |
+| hybrid | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+
+Abstention uses the first-stage dense similarity and is therefore the same with and without rerank.
+
+| Mode | ms/query | ms/query with rerank |
+|------|----------|----------------------|
+| dense | 3.6 | 112.5 |
+| bm25 | 4.4 | 90.4 |
+| hybrid | 4.6 | 101.7 |
+
+Latency was measured on one CPU machine and varies between runs.
 
 #### Abstention at threshold 0.35 (dense)
 

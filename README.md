@@ -168,6 +168,9 @@ Options:
 - `--mode {llm|extractive}`: Answer generation mode (default: `extractive`)
 - `--retrieval {dense|bm25|hybrid}`: Retrieval mode (default: `LECTURE_RAG_RETRIEVAL_MODE` or `dense`)
 - `--abstain-threshold FLOAT`: Minimum dense similarity required to answer, between 0 and 1 (default: `LECTURE_RAG_ABSTAIN_THRESHOLD` or `0.35`)
+- `--rerank`: Rerank candidates with a cross-encoder (off by default)
+- `--rerank-candidates INT`: Candidates retrieved before reranking, at least 1 (default: `max(4*k, 20)`)
+- `--rerank-model NAME`: Cross-encoder model (default: `LECTURE_RAG_RERANK_MODEL` or `cross-encoder/ms-marco-MiniLM-L-6-v2`)
 
 ### Abstention
 
@@ -179,6 +182,14 @@ lecture-rag ask "What is the capital of France?"
 ```
 
 The signal always uses dense similarity because BM25 and RRF scores are on different scales and are not comparable to a fixed cosine threshold. Source scores are printed with their kind, for example `cosine: 0.612`, `bm25: 3.210` or `rrf: 0.033`; an RRF score is a rank-fusion score, not a similarity.
+
+### Reranking
+
+Cross-encoder reranking is optional and off by default. Add `--rerank` to `ask` or `eval` to retrieve a larger candidate pool with the selected first-stage mode and reorder it with a cross-encoder. The cross-encoder is downloaded on first use only when `--rerank` is given; without it, no cross-encoder is loaded.
+
+The candidate pool is `--rerank-candidates` when set, otherwise `max(4*k, 20)`, and it is never smaller than `k`. The default model is `cross-encoder/ms-marco-MiniLM-L-6-v2`; set `LECTURE_RAG_RERANK_MODEL` or pass `--rerank-model` to use another model. Passing `--rerank-candidates` or `--rerank-model` without `--rerank` is an error.
+
+Abstention always uses the first-stage dense cosine similarity, also when reranking. Cross-encoder scores are unbounded logits on a different scale and are never compared with `--abstain-threshold`, so the same threshold applies with and without reranking.
 
 ### Eval Command
 
@@ -197,6 +208,9 @@ Options:
 - `--sweep`: Sweep abstain thresholds from 0.20 to 0.60 in dense mode
 - `--output DIR`: Evaluate all modes at k and at 1, run the sweep, and write `DIR/results.json` and `DIR/results.md`
 - `--abstain-threshold FLOAT`: Minimum dense similarity required to answer, between 0 and 1 (default: `LECTURE_RAG_ABSTAIN_THRESHOLD` or `0.35`)
+- `--rerank`: Rerank candidates with a cross-encoder (off by default)
+- `--rerank-candidates INT`: Candidates retrieved before reranking, at least 1 (default: `max(4*k, 20)`)
+- `--rerank-model NAME`: Cross-encoder model (default: `LECTURE_RAG_RERANK_MODEL` or `cross-encoder/ms-marco-MiniLM-L-6-v2`)
 
 Set the `LECTURE_RAG_RETRIEVAL_MODE` environment variable to choose the default retrieval mode for `ask` and `eval`. The `--retrieval` option overrides the environment variable.
 
@@ -213,7 +227,7 @@ streamlit run demo.py
 
 Navigate to http://localhost:8501 in your browser.
 
-The sidebar controls the retrieval mode (dense, bm25, or hybrid), the abstain threshold, the number of sources to retrieve, and the answer mode (extractive or llm). It also lets you set the index directory; the `LECTURE_RAG_INDEX_DIR` environment variable sets its default value (falling back to `index`).
+The sidebar controls the retrieval mode (dense, bm25, or hybrid), the abstain threshold, the number of sources to retrieve, the answer mode (extractive or llm), and an optional cross-encoder rerank toggle (off by default; the model is loaded only when it is switched on). It also lets you set the index directory; the `LECTURE_RAG_INDEX_DIR` environment variable sets its default value (falling back to `index`).
 
 To regenerate the screenshot in this README:
 
@@ -285,7 +299,7 @@ The block below is generated from `eval/corpus/results.json` by `scripts/run_cor
 
 **Eval set:** `eval/corpus/eval_set.json` has answerable questions over all six PDFs and a set of unanswerable ones. Each answerable question names its expected file and one or more expected pages (`expected_pages`), and was written by reading those pages. A retrieved chunk counts as a hit when it comes from the expected file and one of the expected pages. Most unanswerable questions are off-topic; two are near-domain (support vector machines and quicksort) and are not covered by the corpus. Hit@k and MRR are computed over the answerable questions, abstain metrics over all questions.
 
-Some labels list several pages because the answer is spread over them in the PDF: the Tay question is discussed on pages 7 and 8 and again on pages 19 and 20 of the MLOps primer, weighted kernel k-means is defined across pages 10, 11 and 13 of the clustering notes, and canary deployment starts on page 17 and continues on page 18. These multi-page labels were set before the first run. The one label changed after a run, the temporal-difference question, was reverted to page 15, where the definition (eq. 33) is.
+Some labels list several pages because the answer is spread over them in the PDF. For example, the Tay question is discussed on pages 7 and 8 and again on pages 19 and 20 of the MLOps primer, weighted kernel k-means is defined across pages 10, 11 and 13 of the clustering notes, and canary deployment starts on page 17 and continues on page 18. Only one label was changed after seeing results: the temporal-difference question had been widened to pages 14 and 15 and was reverted to page 15, where the definition (eq. 33) is.
 
 **Reproduce:**
 
@@ -303,11 +317,24 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 #### Retrieval mode comparison
 
-| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
-|------|-------|-------|-------|-------|
-| dense | 0.917 | 0.754 | 0.625 | 0.625 |
-| bm25 | 0.958 | 0.837 | 0.750 | 0.750 |
-| hybrid | 0.938 | 0.819 | 0.729 | 0.729 |
+| Mode | Rerank | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
+|------|--------|-------|-------|-------|-------|
+| dense | no | 0.917 | 0.754 | 0.625 | 0.625 |
+| dense | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+| bm25 | no | 0.958 | 0.837 | 0.750 | 0.750 |
+| bm25 | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+| hybrid | no | 0.938 | 0.819 | 0.729 | 0.729 |
+| hybrid | yes | 0.958 | 0.878 | 0.812 | 0.812 |
+
+Abstention uses the first-stage dense similarity and is therefore the same with and without rerank.
+
+| Mode | ms/query | ms/query with rerank |
+|------|----------|----------------------|
+| dense | 3.6 | 112.5 |
+| bm25 | 4.4 | 90.4 |
+| hybrid | 4.6 | 101.7 |
+
+Latency was measured on one CPU machine and varies between runs.
 
 #### Abstention at threshold 0.35 (dense)
 
@@ -343,10 +370,11 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 <!-- corpus-eval:end -->
 
 **What this shows, and what it does not:**
-- BM25 and hybrid retrieval rank the expected page higher than dense retrieval on this set. Many questions reuse terms from the text (tool and algorithm names such as DeepConcolic, EKiML or Q-learning), which favours keyword matching.
+- Without reranking, BM25 and hybrid retrieval rank the expected page higher than dense retrieval on this set. Many questions reuse terms from the text (tool and algorithm names such as DeepConcolic, EKiML or Q-learning), which favours keyword matching.
+- Reranking the top 20 candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2` improves MRR@5 and Hit@1 in every mode, including BM25, the best mode without it, and does not lower Hit@5. Abstention does not change because it uses the first-stage dense similarity. After reranking, the three modes reach the same page-level scores: the 20 candidates differ between modes, but the expected page usually ends up at the same rank. The gain is a few questions on a small set, and it costs roughly 0.1 s per query on CPU (see the latency table), so `--rerank` stays an optional, off-by-default setting.
 - The abstain threshold of 0.35 is the default chosen on the sample lectures and was not tuned on these questions. The sweep is shown for information only; picking its best value would fit the threshold to the same questions it is measured on.
 - The two near-domain questions score above the threshold and are answered instead of rejected, which is why abstain recall is below 1. A single dense similarity cannot tell a related topic from one the lectures actually cover.
-- Limitations: a small corpus of six documents; questions written by us after reading the pages, so they often share wording with the text and are easier than real student questions; page-level labels, some of which list several pages; one embedding model and one run.
+- Limitations: a small corpus of six documents; questions written by us after reading the pages, so they often share wording with the text and are easier than real student questions; page-level labels, some of which list several pages; one embedding model, one cross-encoder and one run.
 
 ## Testing
 

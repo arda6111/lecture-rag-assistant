@@ -86,6 +86,7 @@
       "abstain_accuracy": 0.9137931034482759
     }
   ],
+  "rerank": false,
   "corpus": {
     "directory": "data/corpus",
     "files": 6,
@@ -127,5 +128,61 @@
       "abstain_precision": 1.0,
       "abstain_recall": 0.8
     }
-  ]
+  ],
+  "reranker": {
+    "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "candidates": 20,
+    "modes": {
+      "dense": {
+        "score_type": "cosine",
+        "hit_at_k": 0.9583333333333334,
+        "mrr_at_k": 0.8784722222222222,
+        "hit_at_1": 0.8125,
+        "mrr_at_1": 0.8125,
+        "abstain_accuracy": 0.9655172413793104,
+        "abstain_precision": 1.0,
+        "abstain_recall": 0.8,
+        "hit_at_k_after_abstain": 0.9583333333333334,
+        "mean_score": 0.2653466566465795
+      },
+      "bm25": {
+        "score_type": "bm25",
+        "hit_at_k": 0.9583333333333334,
+        "mrr_at_k": 0.8784722222222222,
+        "hit_at_1": 0.8125,
+        "mrr_at_1": 0.8125,
+        "abstain_accuracy": 0.9655172413793104,
+        "abstain_precision": 1.0,
+        "abstain_recall": 0.8,
+        "hit_at_k_after_abstain": 0.9583333333333334,
+        "mean_score": 0.31508166385686087
+      },
+      "hybrid": {
+        "score_type": "rrf",
+        "hit_at_k": 0.9583333333333334,
+        "mrr_at_k": 0.8784722222222222,
+        "hit_at_1": 0.8125,
+        "mrr_at_1": 0.8125,
+        "abstain_accuracy": 0.9655172413793104,
+        "abstain_precision": 1.0,
+        "abstain_recall": 0.8,
+        "hit_at_k_after_abstain": 0.9583333333333334,
+        "mean_score": 0.4058668377744997
+      }
+    }
+  },
+  "latency_ms": {
+    "dense": {
+      "base": 3.6,
+      "rerank": 112.5
+    },
+    "bm25": {
+      "base": 4.4,
+      "rerank": 90.4
+    },
+    "hybrid": {
+      "base": 4.6,
+      "rerank": 101.7
+    }
+  }
 }
