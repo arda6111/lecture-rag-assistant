@@ -555,6 +555,39 @@ def test_cli_blank_rerank_model_is_rejected(
     assert "Traceback" not in result.output
 
 
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_cli_rerank_model_is_stripped(
+    command: str,
+    cli_index: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A padded --rerank-model is stripped before the reranker is constructed."""
+    names: list[str] = []
+
+    class RecordingReranker(OverlapReranker):
+        def __init__(self, model_name: str) -> None:
+            names.append(model_name)
+            super().__init__(model_name)
+
+    monkeypatch.setattr("lecture_rag.cli.CrossEncoderReranker", RecordingReranker)
+
+    result = CliRunner().invoke(
+        main,
+        _command_args(
+            command,
+            cli_index,
+            tmp_path,
+            "--rerank",
+            "--rerank-model",
+            "  fake-model  ",
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert names == ["fake-model"]
+
+
 def test_cli_ask_abstains_before_constructing_reranker(
     cli_index: Path,
     monkeypatch: pytest.MonkeyPatch,

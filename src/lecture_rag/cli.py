@@ -80,17 +80,25 @@ def _validate_rerank_options(
     rerank: bool,
     rerank_candidates: int | None,
     rerank_model: str | None,
-) -> None:
-    """Validate rerank options and reject rerank-only options without --rerank."""
+) -> str | None:
+    """Validate rerank options and reject rerank-only options without --rerank.
+
+    Returns:
+        The --rerank-model value with surrounding whitespace stripped, or None
+    """
     if not rerank:
         if rerank_candidates is not None:
             raise click.UsageError("--rerank-candidates requires --rerank")
         if rerank_model is not None:
             raise click.UsageError("--rerank-model requires --rerank")
-        return
+        return None
 
-    if rerank_model is not None and not rerank_model.strip():
+    if rerank_model is None:
+        return None
+    stripped = rerank_model.strip()
+    if not stripped:
         raise click.BadParameter("must not be empty", param_hint="--rerank-model")
+    return stripped
 
 
 def _configure_reranker(
@@ -313,7 +321,7 @@ def ask(
     rerank_model: str | None,
 ) -> None:
     """Ask a QUERY and get an answer with citations."""
-    _validate_rerank_options(rerank, rerank_candidates, rerank_model)
+    rerank_model = _validate_rerank_options(rerank, rerank_candidates, rerank_model)
 
     try:
         generator = Generator.from_config(mode=mode)
@@ -455,7 +463,7 @@ def eval(
     rerank_model: str | None,
 ) -> None:
     """Run evaluation on the retrieval system."""
-    _validate_rerank_options(rerank, rerank_candidates, rerank_model)
+    rerank_model = _validate_rerank_options(rerank, rerank_candidates, rerank_model)
 
     if output is not None:
         if compare or sweep:
