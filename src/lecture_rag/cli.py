@@ -1,6 +1,7 @@
 """Command-line interface for the RAG system."""
 
 import logging
+import os
 from pathlib import Path
 
 import click
@@ -11,10 +12,26 @@ from .eval import evaluate_retrieval, load_eval_set
 from .generation import Generator
 from .index import VectorIndex
 from .pdf_loader import load_directory
-from .retrieval import Retriever
+from .retrieval import DEFAULT_ABSTAIN_THRESHOLD, Retriever
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _default_abstain_threshold() -> float:
+    """Read the default abstain threshold from the environment."""
+    raw_value = os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_ABSTAIN_THRESHOLD
+    try:
+        return float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid LECTURE_RAG_ABSTAIN_THRESHOLD=%r, using %.2f",
+            raw_value,
+            DEFAULT_ABSTAIN_THRESHOLD,
+        )
+        return DEFAULT_ABSTAIN_THRESHOLD
 
 
 @click.group()
@@ -114,6 +131,13 @@ def ingest(
     default=None,
     help="Retrieval mode (default: LECTURE_RAG_RETRIEVAL_MODE or dense)",
 )
+@click.option(
+    "--abstain-threshold",
+    type=float,
+    default=_default_abstain_threshold,
+    show_default=True,
+    help="Minimum dense similarity required to answer",
+)
 def ask(
     query: str,
     index_dir: Path,
@@ -121,10 +145,15 @@ def ask(
     k: int,
     mode: str,
     retrieval: str | None,
+    abstain_threshold: float,
 ) -> None:
     """Ask a QUERY and get an answer with citations."""
     click.echo(f"Loading index from {index_dir}...")
     retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
+
+    if retriever.should_abstain(query, abstain_threshold):
+        click.echo("The lecture materials do not seem to cover this question.")
+        return
 
     click.echo("Retrieving relevant documents...")
     sources = retriever.retrieve(query, k=k)
@@ -186,6 +215,18 @@ def ask(
     is_flag=True,
     help="Compare dense, bm25, and hybrid retrieval",
 )
+@click.option(
+    "--sweep",
+    is_flag=True,
+    help="Sweep abstain thresholds from 0.20 to 0.60 in dense mode",
+)
+@click.option(
+    "--abstain-threshold",
+    type=float,
+    default=_default_abstain_threshold,
+    show_default=True,
+    help="Minimum dense similarity required to answer",
+)
 def eval(
     eval_file: Path,
     index_dir: Path,
@@ -193,6 +234,8 @@ def eval(
     k: int,
     retrieval: str | None,
     compare: bool,
+    sweep: bool,
+    abstain_threshold: float,
 ) -> None:
     """Run evaluation on the retrieval system."""
     click.echo(f"Loading evaluation set from {eval_file}...")
@@ -201,30 +244,67 @@ def eval(
     click.echo(f"Loading index from {index_dir}...")
     retriever = Retriever.from_index_path(index_dir, model, mode=retrieval)
 
+    if sweep:
+        retriever.set_mode("dense")
+        click.echo(f"Sweeping abstain thresholds on {len(eval_set.questions)} questions...")
+        click.echo("")
+        click.echo("| Threshold | Abstain acc |")
+        click.echo("|-----------|-------------|")
+        for step in range(9):
+            threshold = round(0.20 + step * 0.05, 2)
+            metrics = evaluate_retrieval(
+                retriever,
+                eval_set,
+                k=k,
+                abstain_threshold=threshold,
+            )
+            click.echo(f"| {threshold:.2f} | {metrics['abstain_accuracy']:.3f} |")
+        return
+
     if compare:
         click.echo(f"Comparing retrieval modes on {len(eval_set.questions)} questions...")
         click.echo("")
-        click.echo(f"| Mode | Hit@{k} | MRR@{k} |")
-        click.echo("|------|-------|-------|")
+        click.echo(f"| Mode | Hit@{k} | MRR@{k} | Abstain acc |")
+        click.echo("|------|-------|-------|-------------|")
         for mode_name in ["dense", "bm25", "hybrid"]:
             retriever.set_mode(mode_name)
-            metrics = evaluate_retrieval(retriever, eval_set, k=k)
+            metrics = evaluate_retrieval(
+                retriever,
+                eval_set,
+                k=k,
+                abstain_threshold=abstain_threshold,
+            )
             click.echo(
                 f"| {mode_name} | {metrics[f'hit_at_{k}']:.3f} | "
-                f"{metrics[f'mrr_at_{k}']:.3f} |"
+                f"{metrics[f'mrr_at_{k}']:.3f} | "
+                f"{metrics['abstain_accuracy']:.3f} |"
             )
         return
 
     click.echo(f"Evaluating {len(eval_set.questions)} questions...")
-    metrics = evaluate_retrieval(retriever, eval_set, k=k)
+    metrics = evaluate_retrieval(
+        retriever,
+        eval_set,
+        k=k,
+        abstain_threshold=abstain_threshold,
+    )
 
     click.echo("\n" + "=" * 80)
     click.echo("EVALUATION RESULTS:")
     click.echo("=" * 80)
     click.echo(f"Total questions: {metrics['total_questions']}")
+    click.echo(f"Answerable questions: {metrics['answerable_questions']}")
+    click.echo(f"Unanswerable questions: {metrics['unanswerable_questions']}")
     click.echo(f"Hit@{k}: {metrics[f'hit_at_{k}']:.3f}")
     click.echo(f"MRR@{k}: {metrics[f'mrr_at_{k}']:.3f}")
     click.echo(f"Mean retrieval score: {metrics['mean_score']:.3f}")
+    click.echo(f"Abstain accuracy: {metrics['abstain_accuracy']:.3f}")
+    click.echo(f"Abstain precision: {metrics['abstain_precision']:.3f}")
+    click.echo(f"Abstain recall: {metrics['abstain_recall']:.3f}")
+    click.echo(
+        f"Hit@{k} after abstain: "
+        f"{metrics[f'answerable_hit_at_{k}_after_abstain']:.3f}"
+    )
 
 
 if __name__ == "__main__":
