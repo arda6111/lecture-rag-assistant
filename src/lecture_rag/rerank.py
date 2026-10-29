@@ -50,8 +50,14 @@ class CrossEncoderReranker:
             from sentence_transformers import CrossEncoder
 
             self.model = CrossEncoder(model_name)
-        except (OSError, ValueError) as e:
-            raise RerankerError(f"Could not load reranker model '{model_name}': {e}") from e
+        except Exception as e:
+            # sentence-transformers and huggingface_hub raise many unrelated error
+            # types for missing, private or invalid models; report them all cleanly.
+            lines = str(e).splitlines()
+            detail = lines[0] if lines else ""
+            raise RerankerError(
+                f"Could not load reranker model '{model_name}': {type(e).__name__}: {detail}"
+            ) from e
 
     def score(self, query: str, texts: list[str]) -> list[float]:
         """Score document texts against a query with the cross-encoder.

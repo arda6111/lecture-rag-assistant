@@ -4,7 +4,19 @@ A Retrieval-Augmented Generation (RAG) system for university lecture materials. 
 
 ![Streamlit demo answering a question with cited sources](docs/demo.png)
 
-*The demo in its default dense mode answering "Which traversal would you use to order tasks with dependencies?" from the sample lectures, with page-level sources and cosine scores.*
+*The local demo in its default dense mode answering "How does DBSCAN identify core points and outliers?" from the `data/corpus` index, with page-level sources and cosine scores.*
+
+**Live demo:** not deployed yet. A link will be added here once the hosted demo is available.
+
+## Local Quickstart
+
+```bash
+pip install -e .
+lecture-rag ingest data/corpus --index-dir index-corpus
+lecture-rag ask "How does DBSCAN identify core points and outliers?" --index-dir index-corpus
+```
+
+The first `ingest` downloads the `all-MiniLM-L6-v2` embedding model. No API key is needed: answers are extractive unless you configure an LLM (see [Configuration](#configuration)).
 
 ## Why This Project?
 
@@ -59,7 +71,7 @@ graph LR
 - **bm25**: Sparse lexical search using the rank-bm25 Okapi implementation.
 - **hybrid**: Reciprocal Rank Fusion of dense and bm25 results. Each document's score is the sum of `1 / (60 + rank)` across both ranked lists, and the top `max(4k, 20)` candidates are taken from each retriever before fusion.
 
-## Quick Start
+## Setup and Usage
 
 ### Installation
 
@@ -243,7 +255,7 @@ playwright install chromium
 python scripts/capture_demo_screenshot.py
 ```
 
-This writes `docs/demo.png`.
+This writes `docs/demo.png`. The screenshot above was taken against an index of `data/corpus`: start the demo with `LECTURE_RAG_INDEX_DIR=index-corpus` and pass `--question "How does DBSCAN identify core points and outliers?"` to the script.
 
 ## Evaluation Results
 
@@ -328,14 +340,6 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 Abstention uses the first-stage dense similarity and is therefore the same with and without rerank.
 
-| Mode | ms/query | ms/query with rerank |
-|------|----------|----------------------|
-| dense | 3.6 | 112.5 |
-| bm25 | 4.4 | 90.4 |
-| hybrid | 4.6 | 101.7 |
-
-Latency was measured on one CPU machine and varies between runs.
-
 #### Abstention at threshold 0.35 (dense)
 
 | Metric | Value |
@@ -371,7 +375,9 @@ Latency was measured on one CPU machine and varies between runs.
 
 **What this shows, and what it does not:**
 - Without reranking, BM25 and hybrid retrieval rank the expected page higher than dense retrieval on this set. Many questions reuse terms from the text (tool and algorithm names such as DeepConcolic, EKiML or Q-learning), which favours keyword matching.
-- Reranking the top 20 candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2` improves MRR@5 and Hit@1 in every mode, including BM25, the best mode without it, and does not lower Hit@5. Abstention does not change because it uses the first-stage dense similarity. After reranking, the three modes reach the same page-level scores: the 20 candidates differ between modes, but the expected page usually ends up at the same rank. The gain is a few questions on a small set, and it costs roughly 0.1 s per query on CPU (see the latency table), so `--rerank` stays an optional, off-by-default setting.
+- Reranking the top 20 candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2` improves MRR@5 and Hit@1 in every mode and does not lower Hit@5. Hit@1 goes from 30 to 39 of the 48 answerable questions for dense, from 36 to 39 for BM25 (the best mode without reranking, so +3) and from 35 to 39 for hybrid. Abstention does not change because it uses the first-stage dense similarity.
+- After reranking, the three modes have the same page-level scores. The 20 candidates differ between modes, but 46 of the 48 answerable questions have their first hit at the same rank in all three modes, and the 2 that differ cancel out (the datasets question is at rank 1 with dense and rank 2 with BM25 and hybrid, the TestRNN question the other way round).
+- Reranking costs about 0.1 s per query. Measured on the author's machine on 2026-10-29 (8-core Intel Xeon CPU, no GPU): about 3 to 5 ms per query without reranking and 87 to 107 ms with it. Latency is not part of the committed results; `scripts/run_corpus_eval.py` prints it and writes it to the git-ignored `eval/corpus/latency.local.json`. Because the gain is a few questions on a small set, `--rerank` stays an optional, off-by-default setting.
 - The abstain threshold of 0.35 is the default chosen on the sample lectures and was not tuned on these questions. The sweep is shown for information only; picking its best value would fit the threshold to the same questions it is measured on.
 - The two near-domain questions score above the threshold and are answered instead of rejected, which is why abstain recall is below 1. A single dense similarity cannot tell a related topic from one the lectures actually cover.
 - Limitations: a small corpus of six documents; questions written by us after reading the pages, so they often share wording with the text and are easier than real student questions; page-level labels, some of which list several pages; one embedding model, one cross-encoder and one run.

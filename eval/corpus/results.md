@@ -15,14 +15,6 @@ The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 86
 
 Abstention uses the first-stage dense similarity and is therefore the same with and without rerank.
 
-| Mode | ms/query | ms/query with rerank |
-|------|----------|----------------------|
-| dense | 3.6 | 112.5 |
-| bm25 | 4.4 | 90.4 |
-| hybrid | 4.6 | 101.7 |
-
-Latency was measured on one CPU machine and varies between runs.
-
 #### Abstention at threshold 0.35 (dense)
 
 | Metric | Value |

@@ -45,6 +45,7 @@ index/
 index-corpus/
 data/uploaded/
 data/local/
+eval/corpus/*.local.json
 *.log
 
 # Testing

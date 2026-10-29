@@ -203,6 +203,34 @@ def test_search_rerank_without_reranker_raises() -> None:
         retriever.search("alpha", rerank=True)
 
 
+def test_search_reranker_argument_overrides_instance_reranker() -> None:
+    """A per-call reranker overrides the configured instance reranker."""
+    model, index = build_index(count=3)
+    configured = MappingReranker({"alpha document 0": 0.1, "alpha document 1": 0.9})
+    override = ReverseReranker()
+    retriever = Retriever(model, index, mode="dense", reranker=configured)
+
+    outcome = retriever.search("alpha", k=2, rerank=True, reranker=override)
+
+    assert configured.calls == []
+    assert override.calls
+    assert outcome.reranked is True
+    assert all(result.score_type == "rerank" for result in outcome.results)
+
+
+def test_search_reranker_argument_works_without_instance_reranker() -> None:
+    """A per-call reranker is enough when the instance has none configured."""
+    model, index = build_index(count=3)
+    override = ReverseReranker()
+    retriever = Retriever(model, index, mode="dense")
+
+    outcome = retriever.search("alpha", k=2, rerank=True, reranker=override)
+
+    assert override.calls
+    assert outcome.reranked is True
+    assert retriever.reranker is None
+
+
 def test_default_rerank_model_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """The rerank model comes from the environment and falls back to the default."""
     monkeypatch.delenv("LECTURE_RAG_RERANK_MODEL", raising=False)
@@ -215,16 +243,35 @@ def test_default_rerank_model_from_environment(monkeypatch: pytest.MonkeyPatch) 
     assert default_rerank_model() == "custom-reranker"
 
 
-def test_cross_encoder_loading_error_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Loading failures become RerankerError messages that name the model."""
+@pytest.mark.parametrize(
+    ("error_type", "detail"),
+    [
+        (OSError, "not available"),
+        (ValueError, "bad model configuration\nsecond line"),
+        (RuntimeError, "backend failed"),
+    ],
+)
+def test_cross_encoder_loading_error_is_wrapped(
+    error_type: type[Exception],
+    detail: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loading failures become single-line RerankerError messages that name the model."""
 
     def fail(*args: object, **kwargs: object) -> object:
-        raise OSError("not available")
+        raise error_type(detail)
 
     monkeypatch.setattr(sentence_transformers, "CrossEncoder", fail)
 
-    with pytest.raises(RerankerError, match="'broken-model'"):
+    with pytest.raises(RerankerError) as exc_info:
         CrossEncoderReranker("broken-model")
+
+    message = str(exc_info.value)
+    first_line = detail.splitlines()[0]
+    assert message == (
+        f"Could not load reranker model 'broken-model': {error_type.__name__}: {first_line}"
+    )
+    assert "\n" not in message
 
 
 def test_importing_rerank_does_not_construct_cross_encoder(
@@ -421,28 +468,117 @@ def test_cli_eval_output_rerank_records_command(
 
     assert result.exit_code == 0, result.output
     data = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
-    assert data["rerank"] is True
+    assert data["reranked"] is True
     assert " --rerank" in data["command"]
     assert "--rerank-candidates 8" in data["command"]
     assert "--rerank-model fake-model" in data["command"]
 
 
-def test_cli_rerank_candidates_without_rerank_is_a_usage_error(cli_index: Path) -> None:
-    """Rerank-only options require --rerank."""
-    result = CliRunner().invoke(
-        main,
-        [
+def _command_args(
+    command: str,
+    cli_index: Path,
+    tmp_path: Path,
+    *extra: str,
+) -> list[str]:
+    """Build ask or eval arguments for rerank option tests."""
+    if command == "ask":
+        return [
             "ask",
             "What is BFS?",
             "--index-dir",
             str(cli_index),
-            "--rerank-candidates",
-            "3",
-        ],
+            *extra,
+        ]
+    eval_file = write_small_eval_file(tmp_path / "eval.json")
+    return [
+        "eval",
+        "--eval-file",
+        str(eval_file),
+        "--index-dir",
+        str(cli_index),
+        *extra,
+    ]
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+@pytest.mark.parametrize(
+    "option",
+    [("--rerank-model", "x"), ("--rerank-candidates", "5")],
+)
+def test_cli_rerank_options_without_rerank_are_usage_errors(
+    command: str,
+    option: tuple[str, str],
+    cli_index: Path,
+    tmp_path: Path,
+) -> None:
+    """Rerank-only options require --rerank in ask and eval."""
+    result = CliRunner().invoke(
+        main,
+        _command_args(command, cli_index, tmp_path, *option),
     )
 
     assert result.exit_code == 2
-    assert "--rerank-candidates requires --rerank" in result.output
+    assert f"{option[0]} requires --rerank" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+@pytest.mark.parametrize("blank_model", ["", "   "])
+def test_cli_blank_rerank_model_is_rejected(
+    command: str,
+    blank_model: str,
+    cli_index: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank --rerank-model is rejected before any reranker is constructed."""
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError("CrossEncoderReranker must not be constructed")
+
+    monkeypatch.setattr("lecture_rag.cli.CrossEncoderReranker", fail)
+
+    result = CliRunner().invoke(
+        main,
+        _command_args(
+            command,
+            cli_index,
+            tmp_path,
+            "--rerank",
+            "--rerank-model",
+            blank_model,
+        ),
+    )
+
+    assert result.exit_code == 2
+    assert "must not be empty" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_ask_abstains_before_constructing_reranker(
+    cli_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ask --rerank abstains on an off-topic question without loading the reranker."""
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError("CrossEncoderReranker must not be constructed")
+
+    monkeypatch.setattr("lecture_rag.cli.CrossEncoderReranker", fail)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "ask",
+            "How does TCP congestion control work?",
+            "--index-dir",
+            str(cli_index),
+            "--rerank",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "The lecture materials do not seem to cover this question." in result.output
     assert "Traceback" not in result.output
 
 
@@ -465,6 +601,8 @@ def test_cli_reranker_error_is_a_clean_failure(
             "What is BFS?",
             "--index-dir",
             str(cli_index),
+            "--abstain-threshold",
+            "0",
             "--rerank",
         ],
     )
@@ -519,7 +657,7 @@ def test_evaluate_retrieval_passes_rerank_to_search() -> None:
 
 
 def test_run_full_evaluation_passes_rerank_and_records_it() -> None:
-    """run_full_evaluation reranks every call and includes rerank in its result."""
+    """run_full_evaluation reranks every call and records cross-encoder score types."""
     retriever = RecordingRetriever()
     eval_set = EvalSet(
         questions=[
@@ -539,14 +677,47 @@ def test_run_full_evaluation_passes_rerank_and_records_it() -> None:
         rerank=True,
     )
 
-    assert results["rerank"] is True
+    assert results["reranked"] is True
     assert set(results["modes"]) == {"dense", "bm25", "hybrid"}
+    assert {metrics["score_type"] for metrics in results["modes"].values()} == {
+        "cross-encoder logit"
+    }
     assert retriever.rerank_calls
     assert all(retriever.rerank_calls)
 
 
+def test_run_full_evaluation_without_rerank_keeps_mode_score_types() -> None:
+    """Without reranking every mode keeps its original first-stage score type."""
+    retriever = RecordingRetriever()
+    eval_set = EvalSet(
+        questions=[
+            EvalQuestion(question="q", expected_file="a.pdf", expected_page=1),
+        ]
+    )
+
+    results = run_full_evaluation(
+        retriever,  # type: ignore[arg-type]
+        eval_set,
+        eval_file="eval/small.json",
+        k=5,
+        abstain_threshold=0.35,
+        model_name="hashing",
+        indexed_chunks=1,
+        command="lecture-rag eval --output eval",
+    )
+
+    assert results["reranked"] is False
+    assert {mode: metrics["score_type"] for mode, metrics in results["modes"].items()} == {
+        "dense": "cosine",
+        "bm25": "bm25",
+        "hybrid": "rrf",
+    }
+    assert retriever.rerank_calls
+    assert not any(retriever.rerank_calls)
+
+
 def test_compute_corpus_results_with_reranker() -> None:
-    """The corpus script records reranked modes and latency when given a reranker."""
+    """The corpus script records reranked modes without local latency data."""
     reranker = OverlapReranker()
 
     results = run_corpus_eval.compute_corpus_results(
@@ -562,11 +733,28 @@ def test_compute_corpus_results_with_reranker() -> None:
     assert set(results["reranker"]["modes"]) == {"dense", "bm25", "hybrid"}
     assert results["reranker"]["model"] == "fake-reranker"
     assert results["reranker"]["candidates"] == 20
-    assert set(results["latency_ms"]) == {"dense", "bm25", "hybrid"}
+    assert "latency_ms" not in results
+
+
+def test_measure_latency_with_fake_reranker() -> None:
+    """Latency is measured separately for every mode with and without reranking."""
+    retriever = run_corpus_eval.build_default_retriever(
+        HashingEmbeddingModel(),
+        "hashing",
+        corpus_dir=SAMPLE_DIR,
+    )
+    retriever.reranker = OverlapReranker()
+    questions = ["What is dynamic programming?", "What is BFS?"]
+
+    latency = run_corpus_eval.measure_latency(retriever, questions, 5)
+
+    assert set(latency) == {"dense", "bm25", "hybrid"}
     for mode in ("dense", "bm25", "hybrid"):
-        assert set(results["latency_ms"][mode]) == {"base", "rerank"}
-        assert isinstance(results["latency_ms"][mode]["base"], float)
-        assert isinstance(results["latency_ms"][mode]["rerank"], float)
+        assert set(latency[mode]) == {"base", "rerank"}
+        assert isinstance(latency[mode]["base"], float)
+        assert isinstance(latency[mode]["rerank"], float)
+        assert latency[mode]["base"] >= 0.0
+        assert latency[mode]["rerank"] >= 0.0
 
 
 def synthetic_corpus_results(with_rerank: bool) -> dict[str, object]:
@@ -602,7 +790,7 @@ def synthetic_corpus_results(with_rerank: bool) -> dict[str, object]:
             }
         ],
     }
-    results["rerank"] = False
+    results["reranked"] = False
     if with_rerank:
         reranked = dict(metrics)
         reranked["hit_at_k"] = 0.75
@@ -627,13 +815,13 @@ def test_render_corpus_markdown_keeps_old_table_without_rerank() -> None:
     assert "ms/query with rerank" not in markdown
 
 
-def test_render_corpus_markdown_adds_rerank_and_latency_tables() -> None:
-    """Rendering with a rerank key adds reranked metrics and latency."""
+def test_render_corpus_markdown_adds_rerank_table_without_latency() -> None:
+    """Rendering with a reranker adds reranked metrics but never latency."""
     markdown = run_corpus_eval.render_corpus_markdown(synthetic_corpus_results(True))
 
     assert "| Mode | Rerank | Hit@5 | MRR@5 | Hit@1 | MRR@1 |" in markdown
     assert "| dense | no | 0.500 | 0.500 | 0.250 | 0.250 |" in markdown
     assert "| dense | yes | 0.750 | 0.750 | 0.250 | 0.250 |" in markdown
     assert "Abstention uses the first-stage dense similarity" in markdown
-    assert "| Mode | ms/query | ms/query with rerank |" in markdown
-    assert "Latency was measured on one CPU machine and varies between runs." in markdown
+    assert "ms/query with rerank" not in markdown
+    assert "Latency was measured on one CPU machine and varies between runs." not in markdown

@@ -283,6 +283,7 @@ class Retriever:
         k: int = 5,
         mode: RetrievalMode | None = None,
         rerank: bool = False,
+        reranker: Reranker | None = None,
     ) -> RetrievalOutcome:
         """Search once and return results plus the dense abstain signal.
 
@@ -296,6 +297,8 @@ class Retriever:
             k: Number of documents to retrieve
             mode: Optional retrieval mode that overrides the instance mode
             rerank: Whether to rerank the first-stage candidates
+            reranker: Optional reranker that overrides the instance reranker
+                for this call
 
         Returns:
             RetrievalOutcome with results sorted by score descending
@@ -308,14 +311,15 @@ class Retriever:
         if not rerank:
             return self._first_stage(query, k, active_mode)
 
-        if self.reranker is None:
+        active_reranker = reranker if reranker is not None else self.reranker
+        if active_reranker is None:
             raise ValueError("Reranking requires a configured reranker")
 
         pool_size = self.rerank_candidates if self.rerank_candidates is not None else max(k * 4, 20)
         pool_size = max(pool_size, k)
         first_stage = self._first_stage(query, pool_size, active_mode)
         return RetrievalOutcome(
-            results=rerank_results(query, first_stage.results, self.reranker, k),
+            results=rerank_results(query, first_stage.results, active_reranker, k),
             max_dense_similarity=first_stage.max_dense_similarity,
             mode=active_mode,
             reranked=True,

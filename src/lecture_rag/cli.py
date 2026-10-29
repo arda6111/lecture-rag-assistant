@@ -81,13 +81,16 @@ def _validate_rerank_options(
     rerank_candidates: int | None,
     rerank_model: str | None,
 ) -> None:
-    """Reject rerank-only options when reranking is disabled."""
-    if rerank:
+    """Validate rerank options and reject rerank-only options without --rerank."""
+    if not rerank:
+        if rerank_candidates is not None:
+            raise click.UsageError("--rerank-candidates requires --rerank")
+        if rerank_model is not None:
+            raise click.UsageError("--rerank-model requires --rerank")
         return
-    if rerank_candidates is not None:
-        raise click.UsageError("--rerank-candidates requires --rerank")
-    if rerank_model is not None:
-        raise click.UsageError("--rerank-model requires --rerank")
+
+    if rerank_model is not None and not rerank_model.strip():
+        raise click.BadParameter("must not be empty", param_hint="--rerank-model")
 
 
 def _configure_reranker(
@@ -319,14 +322,17 @@ def ask(
 
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
-    _configure_reranker(retriever, rerank, rerank_candidates, rerank_model)
 
     click.echo("Retrieving relevant documents...")
-    outcome = retriever.search(query, k=k, rerank=rerank)
+    outcome = retriever.search(query, k=k)
 
     if outcome.should_abstain(abstain_threshold):
         click.echo("The lecture materials do not seem to cover this question.")
         return
+
+    if rerank:
+        _configure_reranker(retriever, rerank, rerank_candidates, rerank_model)
+        outcome = retriever.search(query, k=k, rerank=True)
 
     sources = outcome.results
 

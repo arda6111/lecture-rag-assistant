@@ -89,6 +89,7 @@ def test_compute_corpus_results_offline() -> None:
     assert results["corpus"] == {"directory": "data/corpus", "files": 6, "pages": 163}
     assert results["chunk_size"] == 512
     assert results["chunk_overlap"] == 64
+    assert "latency_ms" not in results
     assert [row["chunk_size"] for row in results["chunk_sizes"]] == list(
         run_corpus_eval.CHUNK_SIZES
     )

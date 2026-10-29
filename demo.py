@@ -16,7 +16,6 @@ from lecture_rag.index import (
 )
 from lecture_rag.rerank import (
     CrossEncoderReranker,
-    RerankerError,
     default_rerank_model,
 )
 from lecture_rag.retrieval import (
@@ -159,14 +158,8 @@ if retriever.model_warning is not None:
     )
     st.code(retriever.model_warning, language=None)
 
-if rerank:
-    try:
-        retriever.reranker = load_reranker(default_rerank_model())
-    except RerankerError as e:
-        st.error("Failed to load the reranker.")
-        st.code(str(e), language=None)
-        st.stop()
-
+# The retriever comes from st.cache_resource and is shared by all sessions, so
+# per-session state such as a reranker must not be stored on it.
 query = st.text_input(
     "Ask a question:",
     placeholder="What is dynamic programming?",
@@ -175,11 +168,32 @@ query = st.text_input(
 
 if query:
     with st.spinner("Searching..."):
-        outcome = retriever.search(query, k=k, mode=retrieval_mode, rerank=rerank)
+        outcome = retriever.search(query, k=k, mode=retrieval_mode)
 
     if outcome.should_abstain(abstain_threshold):
         st.info("The lecture materials do not seem to cover this question.")
     else:
+        if rerank:
+            try:
+                reranker = load_reranker(default_rerank_model())
+            except Exception as e:
+                # CrossEncoderReranker wraps load failures in RerankerError, but
+                # anything else raised while loading gets the same friendly message.
+                st.error(
+                    "Could not load the reranking model. "
+                    "Uncheck 'Rerank with a cross-encoder' to continue without it."
+                )
+                st.code(str(e), language=None)
+                st.stop()
+
+            outcome = retriever.search(
+                query,
+                k=k,
+                mode=retrieval_mode,
+                rerank=True,
+                reranker=reranker,
+            )
+
         sources = outcome.results
 
         if not sources:

@@ -201,7 +201,12 @@ def evaluate_retrieval(
 
 EVAL_MODES: tuple[RetrievalMode, ...] = ("dense", "bm25", "hybrid")
 SWEEP_THRESHOLDS: tuple[float, ...] = tuple(round(0.20 + 0.05 * step, 2) for step in range(9))
-SCORE_TYPES: dict[str, str] = {"dense": "cosine", "bm25": "bm25", "hybrid": "rrf"}
+SCORE_TYPES: dict[str, str] = {
+    "dense": "cosine",
+    "bm25": "bm25",
+    "hybrid": "rrf",
+    "rerank": "cross-encoder logit",
+}
 
 
 def run_full_evaluation(
@@ -251,7 +256,7 @@ def run_full_evaluation(
             rerank=rerank,
         )
         modes[mode] = {
-            "score_type": SCORE_TYPES[mode],
+            "score_type": SCORE_TYPES["rerank" if rerank else mode],
             "hit_at_k": at_k[f"hit_at_{k}"],
             "mrr_at_k": at_k[f"mrr_at_{k}"],
             "hit_at_1": at_1["hit_at_1"],
@@ -293,7 +298,7 @@ def run_full_evaluation(
         },
         "modes": modes,
         "sweep": sweep,
-        "rerank": rerank,
+        "reranked": rerank,
     }
 
 

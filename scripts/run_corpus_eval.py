@@ -35,6 +35,7 @@ CORPUS_DIR = REPO_ROOT / "data" / "corpus"
 EVAL_FILE_PATH = REPO_ROOT / EVAL_FILE
 RESULTS_JSON = REPO_ROOT / "eval" / "corpus" / "results.json"
 RESULTS_MD = REPO_ROOT / "eval" / "corpus" / "results.md"
+LATENCY_JSON = REPO_ROOT / "eval" / "corpus" / "latency.local.json"
 README_PATH = REPO_ROOT / "README.md"
 
 START_MARKER = "<!-- corpus-eval:start -->"
@@ -60,6 +61,34 @@ def build_retriever(
     index = VectorIndex(embedding_model.dimension, model_name=model_name)
     index.add_documents(chunks, embeddings)
     return Retriever(embedding_model, index, mode="dense")
+
+
+def build_default_retriever(
+    embedding_model: EmbeddingModel,
+    model_name: str,
+    corpus_dir: Path = CORPUS_DIR,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> Retriever:
+    """Build the default retriever used for local latency measurements.
+
+    Args:
+        embedding_model: Model used to embed chunks and queries
+        model_name: Embedding model name stored in the index metadata
+        corpus_dir: Directory containing the corpus PDFs
+        chunk_size: Chunk size used for the default retriever
+        chunk_overlap: Chunk overlap used for the default retriever
+
+    Returns:
+        Retriever over the corpus at the requested chunk size
+    """
+    documents = load_directory(corpus_dir)
+    chunks = chunk_documents(
+        documents,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+    return build_retriever(embedding_model, chunks, model_name)
 
 
 def _chunk_size_row(
@@ -110,6 +139,42 @@ def _mean_latency_ms(
         retriever.search(question, k=k, mode=mode, rerank=rerank)
     elapsed = time.perf_counter() - start
     return round(elapsed * 1000.0 / len(questions), 1)
+
+
+def measure_latency(
+    retriever: Retriever,
+    questions: list[str],
+    k: int,
+) -> dict[str, dict[str, float]]:
+    """Measure mean per-query latency for every retrieval mode.
+
+    Latency is local to the machine that ran the measurement, so it is kept
+    separate from the committed results. The rerank measurement is included
+    only when the retriever has a reranker configured.
+
+    Args:
+        retriever: Retriever to measure
+        questions: Questions used for the measurement
+        k: Number of documents to retrieve
+
+    Returns:
+        Mapping from retrieval mode to base and rerank latency in milliseconds
+    """
+    latency: dict[str, dict[str, float]] = {}
+    for mode in EVAL_MODES:
+        row = {
+            "base": _mean_latency_ms(retriever, questions, mode, k, rerank=False),
+        }
+        if retriever.reranker is not None:
+            row["rerank"] = _mean_latency_ms(
+                retriever,
+                questions,
+                mode,
+                k,
+                rerank=True,
+            )
+        latency[mode] = row
+    return latency
 
 
 def compute_corpus_results(
@@ -218,15 +283,6 @@ def compute_corpus_results(
             "modes": reranked["modes"],
         }
 
-        questions = [question.question for question in eval_set.questions]
-        results["latency_ms"] = {
-            mode: {
-                "base": _mean_latency_ms(default_retriever, questions, mode, k, rerank=False),
-                "rerank": _mean_latency_ms(default_retriever, questions, mode, k, rerank=True),
-            }
-            for mode in EVAL_MODES
-        }
-
     return results
 
 
@@ -277,18 +333,6 @@ def render_corpus_markdown(results: dict[str, Any]) -> str:
             "Abstention uses the first-stage dense similarity and is therefore "
             "the same with and without rerank.",
         ]
-        if "latency_ms" in results:
-            lines += [
-                "",
-                "| Mode | ms/query | ms/query with rerank |",
-                "|------|----------|----------------------|",
-            ]
-            for mode, latency in results["latency_ms"].items():
-                lines.append(f"| {mode} | {latency['base']:.1f} | {latency['rerank']:.1f} |")
-            lines += [
-                "",
-                "Latency was measured on one CPU machine and varies between runs.",
-            ]
     else:
         lines += [
             f"| Mode | Hit@{k} | MRR@{k} | Hit@1 | MRR@1 |",
@@ -376,6 +420,22 @@ def _write_outputs(results: dict[str, Any]) -> None:
     README_PATH.write_text(update_readme(readme, markdown), encoding="utf-8")
 
 
+def _write_latency(latency: dict[str, dict[str, float]]) -> None:
+    """Print a short latency table and write the local latency file."""
+    print("Latency (ms/query):")
+    print("| Mode | base | rerank |")
+    print("|------|------|--------|")
+    for mode, row in latency.items():
+        reranked = f"{row['rerank']:.1f}" if "rerank" in row else "-"
+        print(f"| {mode} | {row['base']:.1f} | {reranked} |")
+
+    LATENCY_JSON.parent.mkdir(parents=True, exist_ok=True)
+    LATENCY_JSON.write_text(
+        json.dumps(latency, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     """Run the corpus evaluation or re-render committed results."""
     parser = argparse.ArgumentParser(
@@ -395,6 +455,11 @@ def main() -> None:
         "--no-rerank",
         action="store_true",
         help="Disable cross-encoder reranking",
+    )
+    parser.add_argument(
+        "--skip-latency",
+        action="store_true",
+        help="Skip local latency measurement",
     )
     parser.add_argument(
         "--render-only",
@@ -417,6 +482,16 @@ def main() -> None:
         rerank_model_name=None if args.no_rerank else args.rerank_model,
     )
     _write_outputs(results)
+
+    if args.skip_latency:
+        return
+
+    latency_retriever = build_default_retriever(embedding_model, args.model)
+    latency_retriever.reranker = reranker
+    eval_set = load_eval_set(EVAL_FILE_PATH)
+    questions = [question.question for question in eval_set.questions]
+    latency = measure_latency(latency_retriever, questions, DEFAULT_K)
+    _write_latency(latency)
 
 
 if __name__ == "__main__":

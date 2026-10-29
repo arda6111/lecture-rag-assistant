@@ -16,6 +16,7 @@ from lecture_rag.index import (  # noqa: E402
     VectorIndex,
 )
 from lecture_rag.models import Answer, Document, RetrievalResult  # noqa: E402
+from lecture_rag.rerank import RerankerError  # noqa: E402
 from lecture_rag.retrieval import Retriever  # noqa: E402
 from tests.conftest import HashingEmbeddingModel  # noqa: E402
 
@@ -622,26 +623,11 @@ def test_hostile_chunk_and_answer_are_rendered_only_as_text(
         streamlit.cache_resource.clear()
 
 
-def test_rerank_checkbox_loads_reranker_and_labels_scores(
+def patch_retriever(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    retrievers: list[Retriever] | None = None,
 ) -> None:
-    """The rerank checkbox loads a fake reranker only when it is checked."""
-    index_dir = tmp_path / "index"
-    build_demo_index(index_dir)
-    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
-    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
-
-    instances: list[str] = []
-
-    class FakeReranker:
-        """Fake reranker that records construction."""
-
-        def __init__(self, model_name: str) -> None:
-            instances.append(model_name)
-
-        def score(self, query: str, texts: list[str]) -> list[float]:
-            return [float(index) for index in range(len(texts))]
+    """Patch the demo retriever loader and record created retrievers."""
 
     def fake_from_index_path(
         cls: type[Retriever],
@@ -653,19 +639,47 @@ def test_rerank_checkbox_loads_reranker_and_labels_scores(
         reranker: object = None,
         rerank_candidates: int | None = None,
     ) -> Retriever:
-        return Retriever(
+        retriever = Retriever(
             HashingEmbeddingModel(),
             VectorIndex.load(index_path),
             mode="dense",
             reranker=reranker,  # type: ignore[arg-type]
             rerank_candidates=rerank_candidates,
         )
+        if retrievers is not None:
+            retrievers.append(retriever)
+        return retriever
 
     monkeypatch.setattr(
         Retriever,
         "from_index_path",
         classmethod(fake_from_index_path),
     )
+
+
+def test_rerank_checkbox_loads_reranker_and_labels_scores(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The rerank checkbox loads a fake reranker only when it is checked."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
+
+    instances: list[str] = []
+    retrievers: list[Retriever] = []
+
+    class FakeReranker:
+        """Fake reranker that records construction."""
+
+        def __init__(self, model_name: str) -> None:
+            instances.append(model_name)
+
+        def score(self, query: str, texts: list[str]) -> list[float]:
+            return [float(index) for index in range(len(texts))]
+
+    patch_retriever(monkeypatch, retrievers)
     monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", FakeReranker)
     streamlit.cache_resource.clear()
 
@@ -687,5 +701,86 @@ def test_rerank_checkbox_loads_reranker_and_labels_scores(
         assert not app.exception
         assert instances
         assert any("rerank:" in str(element.label) for element in app.expander)
+        assert retrievers
+        assert retrievers[0].reranker is None
+    finally:
+        streamlit.cache_resource.clear()
+
+
+@pytest.mark.parametrize("error_type", [RerankerError, RuntimeError])
+def test_rerank_load_failure_shows_friendly_message(
+    error_type: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A reranker load failure shows a fixed message and no traceback."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
+
+    class FailingReranker:
+        """Reranker that fails to load."""
+
+        def __init__(self, model_name: str) -> None:
+            raise error_type("bad reranker\nsecond line")
+
+    patch_retriever(monkeypatch)
+    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", FailingReranker)
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        app.text_input(key="query").set_value("What is dynamic programming?")
+        app.checkbox(key="rerank").set_value(True)
+        app.run()
+
+        assert not app.exception
+        assert any(
+            "Could not load the reranking model. "
+            "Uncheck 'Rerank with a cross-encoder' to continue without it." in error
+            for error in element_values(app, ("error",))
+        )
+        assert any("bad reranker" in code for code in element_values(app, ("code",)))
+    finally:
+        streamlit.cache_resource.clear()
+
+
+def test_off_topic_query_does_not_load_reranker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An abstained query never loads the reranker, even when it is checked."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+
+    instances: list[str] = []
+
+    class FakeReranker:
+        """Fake reranker that records construction."""
+
+        def __init__(self, model_name: str) -> None:
+            instances.append(model_name)
+
+        def score(self, query: str, texts: list[str]) -> list[float]:
+            return [float(index) for index in range(len(texts))]
+
+    patch_retriever(monkeypatch)
+    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", FakeReranker)
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        app.text_input(key="query").set_value("How does TCP congestion control work?")
+        app.checkbox(key="rerank").set_value(True)
+        app.run()
+
+        assert not app.exception
+        assert instances == []
+        assert any(
+            "The lecture materials do not seem to cover this question." in info
+            for info in element_values(app, ("info",))
+        )
     finally:
         streamlit.cache_resource.clear()
