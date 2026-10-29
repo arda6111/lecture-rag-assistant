@@ -95,6 +95,14 @@ allow_model_mismatch = st.sidebar.checkbox(
 )
 
 index_path = Path(index_dir)
+if index_path.is_symlink():
+    st.error(
+        "Invalid index: the index directory is a symlink. "
+        "Re-run `lecture-rag ingest` to rebuild the index."
+    )
+    st.code(index_dir, language=None)
+    st.stop()
+
 if not index_path.exists():
     st.error("Index directory not found. Run `lecture-rag ingest` first.")
     st.code(index_dir, language=None)

@@ -1,5 +1,6 @@
 """Tests for the Streamlit demo configuration and safe rendering."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -7,13 +8,14 @@ import pytest
 streamlit = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from lecture_rag.generation import Generator  # noqa: E402
 from lecture_rag.index import (  # noqa: E402
     IndexMetadataError,
     IndexModelMismatchError,
     InvalidIndexError,
     VectorIndex,
 )
-from lecture_rag.models import Document  # noqa: E402
+from lecture_rag.models import Answer, Document, RetrievalResult  # noqa: E402
 from lecture_rag.retrieval import Retriever  # noqa: E402
 from tests.conftest import HashingEmbeddingModel  # noqa: E402
 
@@ -297,7 +299,7 @@ def test_index_metadata_error_is_shown(
     index_dir.mkdir()
     monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
     message = (
-        "Invalid index metadata in x: bad. "
+        "Invalid index at x: index_meta.json is bad. "
         "Re-run `lecture-rag ingest` to rebuild the index."
     )
 
@@ -471,5 +473,105 @@ def test_invalid_index_error_is_shown(
             "Failed to load index" in error
             for error in element_values(app, ("error",))
         )
+    finally:
+        streamlit.cache_resource.clear()
+
+def test_dangling_symlinked_index_shows_symlink_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A dangling symlinked index directory is reported as a symlink."""
+    link_path = tmp_path / "dangling_index"
+    os.symlink(tmp_path / "missing_index", link_path)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(link_path))
+
+    app = run_demo()
+
+    assert not app.exception
+    assert any(
+        "Invalid index: the index directory is a symlink. "
+        "Re-run `lecture-rag ingest` to rebuild the index." in error
+        for error in element_values(app, ("error",))
+    )
+    assert any(str(link_path) in code for code in element_values(app, ("code",)))
+
+
+def test_hostile_chunk_and_answer_are_rendered_only_as_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Hostile chunk and answer text never reach labels or message elements."""
+    hostile_chunk = (
+        "**bold** [x](http://e.com) http://2130706433/login <script>x</script>"
+    )
+    hostile_answer = (
+        "**answer** [y](http://e.org) http://2130706433/admin <script>y</script>"
+    )
+    index_dir = tmp_path / "index"
+    model = HashingEmbeddingModel()
+    documents = [
+        Document(
+            text=hostile_chunk,
+            file_name="hostile.pdf",
+            page_number=1,
+            chunk_id="hostile.pdf_page_1",
+        )
+    ]
+    index = VectorIndex(model.dimension, model_name=model.model_name)
+    index.add_documents(documents, model.embed_texts([hostile_chunk]))
+    index.save(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
+
+    def fake_from_index_path(
+        cls: type[Retriever],
+        index_path: Path,
+        model_name: str = "all-MiniLM-L6-v2",
+        mode: str | None = None,
+        rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
+    ) -> Retriever:
+        return Retriever(
+            HashingEmbeddingModel(),
+            VectorIndex.load(index_path),
+            mode="dense",
+        )
+
+    class FakeGenerator:
+        """Generator that returns a hostile answer and the given sources."""
+
+        def generate_answer(
+            self,
+            query: str,
+            sources: list[RetrievalResult],
+        ) -> Answer:
+            return Answer(
+                answer_text=hostile_answer,
+                sources=sources,
+                mode="llm",
+            )
+
+    def fake_from_config(cls: type[Generator], mode: str = "llm") -> FakeGenerator:
+        return FakeGenerator()
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fake_from_index_path),
+    )
+    monkeypatch.setattr(
+        "lecture_rag.generation.Generator.from_config",
+        classmethod(fake_from_config),
+    )
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        app.text_input(key="query").set_value("bold login script")
+        app.run()
+
+        assert not app.exception
+        assert_rendered_safely(app, hostile_chunk)
+        assert_rendered_safely(app, hostile_answer)
     finally:
         streamlit.cache_resource.clear()
