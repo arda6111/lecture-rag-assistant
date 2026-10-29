@@ -21,21 +21,33 @@ def chunk_documents(
 
     Returns:
         List of chunked documents with updated chunk IDs
+
+    Raises:
+        ValueError: If the chunk size or overlap parameters are invalid
     """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap must be non-negative")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be less than chunk_size")
+
     chunked_docs = []
 
     for doc in documents:
         text = doc.text
+        text_length = len(text)
 
-        if len(text) <= chunk_size:
+        if text_length <= chunk_size:
             chunked_docs.append(doc)
             continue
 
         start = 0
         chunk_idx = 0
 
-        while start < len(text):
-            end = start + chunk_size
+        while start < text_length:
+            end = min(start + chunk_size, text_length)
+
             chunk_text = text[start:end]
 
             if chunk_text.strip():
@@ -48,6 +60,9 @@ def chunk_documents(
                     )
                 )
                 chunk_idx += 1
+
+            if end >= text_length:
+                break
 
             start = end - chunk_overlap
 
