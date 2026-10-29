@@ -73,3 +73,28 @@ def test_generator_preserves_sources(sample_retrieval_results) -> None:
     assert answer.sources[0].document.file_name == "test.pdf"
     assert answer.sources[0].document.page_number == 1
     assert answer.sources[1].document.page_number == 2
+
+
+def test_llm_mode_without_key_fails_before_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM mode without an API key or base URL raises instead of calling the API."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        Generator.from_config(mode="llm")
+
+
+def test_llm_mode_with_local_base_url_needs_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A local OpenAI-compatible server can be used without a key."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+
+    generator = Generator.from_config(mode="llm")
+
+    assert generator.provider is not None
+
+
+def test_unknown_generation_mode_raises() -> None:
+    """Unknown generation modes are rejected."""
+    with pytest.raises(ValueError, match="Unknown generation mode"):
+        Generator.from_config(mode="magic")

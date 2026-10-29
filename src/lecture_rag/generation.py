@@ -36,11 +36,20 @@ class OpenAICompatibleProvider(GenerationProvider):
             base_url: Base URL for the API
             model: Model name to use
         """
+        resolved_key = api_key or os.getenv("OPENAI_API_KEY") or None
+        resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL") or None
+
+        if not resolved_key:
+            if not resolved_base_url:
+                raise ValueError(
+                    "OPENAI_API_KEY is not set. Set it in .env, point OPENAI_BASE_URL "
+                    "at a local OpenAI-compatible server, or use extractive mode."
+                )
+            # Local OpenAI-compatible servers such as Ollama do not check the key.
+            resolved_key = "not-needed"
+
         self.model = model
-        self.client = OpenAI(
-            api_key=api_key or os.getenv("OPENAI_API_KEY", "dummy"),
-            base_url=base_url or os.getenv("OPENAI_BASE_URL"),
-        )
+        self.client = OpenAI(api_key=resolved_key, base_url=resolved_base_url)
 
     def generate(self, query: str, sources: list[RetrievalResult]) -> str:
         """Generate an answer using the LLM.
@@ -159,7 +168,13 @@ class Generator:
 
         Returns:
             Initialized Generator instance
+
+        Raises:
+            ValueError: If the mode is unknown or llm mode has no usable configuration
         """
+        if mode not in ("llm", "extractive"):
+            raise ValueError(f"Unknown generation mode: {mode!r}")
+
         if mode == "extractive":
             provider = ExtractiveFallbackProvider()
         else:
