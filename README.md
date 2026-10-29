@@ -73,7 +73,10 @@ pip install -e .
 
 ### Basic Usage
 
-The sample PDFs in `data/sample_lectures/` are committed, so no setup step is needed. (`scripts/generate_sample_pdfs.py` only recreates them.)
+The repository ships two data sets:
+
+- `data/sample_lectures/` holds 4 generated pages, used by the tests and the eval in this README. (`scripts/generate_sample_pdfs.py` only recreates them.)
+- `data/corpus/` holds six CC BY 4.0 tutorials and lecture notes from arXiv on transformers, autoencoders, reinforcement learning, testing neural networks, MLOps and clustering. Sources, licenses and checksums are in `data/SOURCES.md`.
 
 1. **Index lecture PDFs**:
 
@@ -82,6 +85,16 @@ lecture-rag ingest data/sample_lectures
 ```
 
 This creates a local index in the `index/` directory.
+
+For the larger corpus, use a separate index directory:
+
+```bash
+lecture-rag ingest data/corpus --index-dir index-corpus
+```
+
+With all-MiniLM-L6-v2 this gives 861 chunks from 163 pages.
+
+Put your own lecture PDFs in `data/local/`, which is ignored by git, so course material you are not allowed to share never gets committed.
 
 `ingest` writes `index_meta.json` with the embedding model name and vector dimension; indexes from older versions without it still load and are only checked by dimension; querying with a different model is an error and needs a re-ingest with that model, unless you pass `--allow-model-mismatch`.
 
@@ -266,6 +279,8 @@ lecture-rag eval --output eval
 - 0.35 is the midpoint of the 0.30 to 0.40 plateau of the sweep.
 - The sample corpus has only 4 pages, so dense and hybrid retrieval are saturated and BM25 misses one question at rank 1. These numbers are a sanity check, not a benchmark. A larger corpus is needed to compare the modes meaningfully.
 
+An evaluation on `data/corpus/` with the real embedding model will be added in a follow-up change.
+
 ## Testing
 
 Run the test suite:
@@ -297,6 +312,8 @@ lecture-rag-assistant/
 │   └── cli.py             # Command-line interface
 ├── tests/                 # Pytest test suite
 ├── data/sample_lectures/  # Sample PDFs
+├── data/corpus/           # CC BY 4.0 lecture-style PDFs
+├── data/SOURCES.md        # Sources, licenses and checksums for the corpus
 ├── docs/                  # README screenshot (demo.png)
 ├── eval/                  # Evaluation questions and committed results
 ├── scripts/               # Utility scripts

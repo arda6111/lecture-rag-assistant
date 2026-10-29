@@ -42,7 +42,9 @@ ENV/
 *.sqlite
 *.faiss
 index/
+index-corpus/
 data/uploaded/
+data/local/
 *.log
 
 # Testing
