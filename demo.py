@@ -7,7 +7,9 @@ from typing import cast
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
+from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import Generator
+from lecture_rag.index import IndexModelMismatchError
 from lecture_rag.retrieval import (
     RetrievalMode,
     Retriever,
@@ -29,13 +31,9 @@ st.markdown(
 
 
 @st.cache_resource
-def load_retriever(
-    index_path: str,
-    model_name: str,
-    retrieval_mode: RetrievalMode,
-) -> Retriever:
+def load_retriever(index_path: str, model_name: str) -> Retriever:
     """Load the retriever (cached)."""
-    return Retriever.from_index_path(Path(index_path), model_name, mode=retrieval_mode)
+    return Retriever.from_index_path(Path(index_path), model_name, mode="dense")
 
 
 index_dir = st.sidebar.text_input(
@@ -50,9 +48,10 @@ try:
 except ValueError as e:
     st.error(
         f"Configuration error: {e}. "
-        "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid."
+        "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid, "
+        "or pick a mode in the sidebar."
     )
-    st.stop()
+    configured_mode = "dense"
 retrieval_mode = cast(
     RetrievalMode,
     st.sidebar.selectbox(
@@ -74,8 +73,14 @@ if not Path(index_dir).exists():
     st.stop()
 
 try:
-    retriever = load_retriever(index_dir, model_name, retrieval_mode)
+    retriever = load_retriever(index_dir, model_name)
     st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
+except IndexModelMismatchError as e:
+    st.error(f"Model and index do not match: {e}")
+    st.stop()
+except EmbeddingModelError as e:
+    st.error(str(e))
+    st.stop()
 except Exception as e:
     st.error(f"Failed to load index: {e}")
     st.stop()
