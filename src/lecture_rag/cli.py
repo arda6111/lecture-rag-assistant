@@ -200,12 +200,14 @@ def ask(
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval)
 
-    if retriever.should_abstain(query, abstain_threshold):
+    click.echo("Retrieving relevant documents...")
+    outcome = retriever.search(query, k=k)
+
+    if outcome.should_abstain(abstain_threshold):
         click.echo("The lecture materials do not seem to cover this question.")
         return
 
-    click.echo("Retrieving relevant documents...")
-    sources = retriever.retrieve(query, k=k)
+    sources = outcome.results
 
     if not sources:
         click.echo("No relevant documents found.")
@@ -227,7 +229,7 @@ def ask(
     click.echo("=" * 80)
     for i, result in enumerate(answer.sources, 1):
         doc = result.document
-        click.echo(f"\n[{i}] {doc.file_name}, page {doc.page_number} (score: {result.score:.3f})")
+        click.echo(f"\n[{i}] {doc.file_name}, page {doc.page_number} ({result.score_label})")
         click.echo(f"    {doc.text[:150]}...")
 
 

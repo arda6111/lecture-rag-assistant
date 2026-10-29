@@ -71,20 +71,24 @@ except Exception as e:
 query = st.text_input("Ask a question:", placeholder="What is dynamic programming?")
 
 if query:
-    if retriever.should_abstain(query, abstain_threshold):
+    with st.spinner("Searching..."):
+        outcome = retriever.search(query, k=k, mode=retrieval_mode)
+
+    if outcome.should_abstain(abstain_threshold):
         st.info("The lecture materials do not seem to cover this question.")
     else:
-        with st.spinner("Searching..."):
-            sources = retriever.retrieve(query, k=k, mode=retrieval_mode)
-
-        best_similarity = retriever.max_dense_similarity(query)
+        sources = outcome.results
 
         if not sources:
             st.warning("No relevant documents found.")
         else:
-            with st.spinner("Generating answer..."):
-                generator = Generator.from_config(mode=mode)
-                answer = generator.generate_answer(query, sources)
+            try:
+                with st.spinner("Generating answer..."):
+                    generator = Generator.from_config(mode=mode)
+                    answer = generator.generate_answer(query, sources)
+            except ValueError as e:
+                st.error(str(e))
+                st.stop()
 
             st.subheader("Answer")
             st.markdown(answer.answer_text)
@@ -93,8 +97,8 @@ if query:
             for i, result in enumerate(answer.sources, 1):
                 doc = result.document
                 with st.expander(
-                    f"[{i}] {doc.file_name}, page {doc.page_number} (score: {result.score:.3f})"
+                    f"[{i}] {doc.file_name}, page {doc.page_number} ({result.score_label})"
                 ):
                     st.text(doc.text)
 
-        st.caption(f"Best dense similarity: {best_similarity:.3f}")
+    st.caption(f"Best dense similarity: {outcome.max_dense_similarity:.3f}")

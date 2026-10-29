@@ -122,7 +122,7 @@ class ExtractiveFallbackProvider(GenerationProvider):
         answer = (
             f"[Extractive mode - most relevant passage]:\n\n"
             f"{doc.text[:500]}...\n\n"
-            f"(Source: {doc.file_name}, page {doc.page_number}, score: {top_result.score:.3f})"
+            f"(Source: {doc.file_name}, page {doc.page_number}, {top_result.score_label})"
         )
 
         return answer
