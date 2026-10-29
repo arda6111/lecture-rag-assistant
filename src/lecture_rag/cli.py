@@ -65,16 +65,34 @@ def main() -> None:
     default=64,
     help="Overlap between chunks in characters",
 )
+@click.option(
+    "--max-file-size-mb",
+    type=float,
+    default=None,
+    help="Maximum PDF file size in MB (default: LECTURE_RAG_MAX_FILE_SIZE_MB or 50)",
+)
+@click.option(
+    "--max-pages",
+    type=int,
+    default=None,
+    help="Maximum pages per PDF (default: LECTURE_RAG_MAX_PAGES or 500)",
+)
 def ingest(
     input_dir: Path,
     index_dir: Path,
     model: str,
     chunk_size: int,
     chunk_overlap: int,
+    max_file_size_mb: float | None,
+    max_pages: int | None,
 ) -> None:
     """Ingest PDF files from INPUT_DIR and build the index."""
     click.echo(f"Loading PDFs from {input_dir}...")
-    documents = load_directory(input_dir)
+    documents = load_directory(
+        input_dir,
+        max_file_size_mb=max_file_size_mb,
+        max_pages=max_pages,
+    )
 
     if not documents:
         click.echo("No documents loaded. Exiting.")
