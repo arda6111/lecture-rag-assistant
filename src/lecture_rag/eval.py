@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .retrieval import RetrievalMode, Retriever
 
@@ -39,10 +39,16 @@ def load_eval_set(path: Path) -> EvalSet:
 
     Returns:
         Loaded EvalSet
+
+    Raises:
+        ValueError: If the file is not valid JSON or does not match the schema
     """
-    with open(path) as f:
-        data = json.load(f)
-    return EvalSet(**data)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return EvalSet.model_validate(data)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as e:
+        raise ValueError(f"Invalid eval file {path}: {e}") from e
 
 
 def evaluate_retrieval(
@@ -67,6 +73,9 @@ def evaluate_retrieval(
     Returns:
         Dictionary of metrics
     """
+    if not eval_set.questions:
+        raise ValueError("Eval set is empty")
+
     total = len(eval_set.questions)
     answerable_total = sum(1 for question in eval_set.questions if question.answerable)
     unanswerable_total = total - answerable_total

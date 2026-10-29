@@ -215,3 +215,27 @@ def test_real_eval_set_structure() -> None:
         question.expected_file is None and question.expected_page is None
         for question in unanswerable
     )
+
+
+def test_load_eval_set_rejects_malformed_json(tmp_path: Path) -> None:
+    """Malformed JSON raises a ValueError naming the file."""
+    eval_file = tmp_path / "broken.json"
+    eval_file.write_text('{"questions": [', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid eval file"):
+        load_eval_set(eval_file)
+
+
+def test_load_eval_set_rejects_schema_errors(tmp_path: Path) -> None:
+    """JSON that does not match the schema raises a ValueError."""
+    eval_file = tmp_path / "wrong.json"
+    eval_file.write_text('{"questions": [{"expected_page": 1}]}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid eval file"):
+        load_eval_set(eval_file)
+
+
+def test_evaluate_retrieval_rejects_empty_eval_set() -> None:
+    """An empty eval set is an error instead of all-zero metrics."""
+    with pytest.raises(ValueError, match="empty"):
+        evaluate_retrieval(None, EvalSet(questions=[]))  # type: ignore[arg-type]
