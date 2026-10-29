@@ -308,4 +308,5 @@ class Retriever:
 
         index = VectorIndex.load(index_path)
         embedding_model = EmbeddingModel(model_name)
+        index.check_model(model_name, embedding_model.dimension)
         return cls(embedding_model, index, mode=mode, rrf_k=rrf_k)

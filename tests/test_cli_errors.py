@@ -193,3 +193,79 @@ def test_ask_missing_index_is_reported(runner: CliRunner, tmp_path: Path) -> Non
 
     assert_clean_failure(result)
     assert "Index files not found" in result.output
+
+class SmallEmbeddingModel(HashingEmbeddingModel):
+    """Offline embedding model that produces 128-dimensional vectors."""
+
+    dimension = 128
+
+
+def ask_args(index_dir: Path, model: str = "small") -> list[str]:
+    """Build ask arguments against a test index."""
+    return ["ask", "What is BFS?", "--index-dir", str(index_dir), "--model", model]
+
+
+def eval_args(index_dir: Path, model: str = "small") -> list[str]:
+    """Build eval arguments against a test index."""
+    return [
+        "eval",
+        "--eval-file",
+        str(EVAL_FILE),
+        "--index-dir",
+        str(index_dir),
+        "--model",
+        model,
+    ]
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_model_dimension_mismatch_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """A model with a different dimension produces a clean CLI error."""
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", SmallEmbeddingModel)
+    args = ask_args(index_dir) if command == "ask" else eval_args(index_dir)
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "128-dimensional" in result.output
+    assert "Run `lecture-rag ingest` first" not in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_legacy_index_dimension_mismatch_fails_cleanly(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """A legacy index without metadata still produces a clean dimension error."""
+    (index_dir / "index_meta.json").unlink()
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", SmallEmbeddingModel)
+    args = ask_args(index_dir) if command == "ask" else eval_args(index_dir)
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "128-dimensional" in result.output
+    assert "Run `lecture-rag ingest` first" not in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_matching_model_still_works(
+    runner: CliRunner,
+    index_dir: Path,
+    command: str,
+) -> None:
+    """The ingest model can still query the index for ask and eval."""
+    args = ask_args(index_dir, model="all-MiniLM-L6-v2")
+    if command == "eval":
+        args = eval_args(index_dir, model="all-MiniLM-L6-v2")
+
+    result = runner.invoke(main, args)
+
+    assert result.exit_code == 0, result.output

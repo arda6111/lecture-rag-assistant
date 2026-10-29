@@ -19,7 +19,7 @@ from .eval import (
     run_full_evaluation,
 )
 from .generation import Generator
-from .index import VectorIndex
+from .index import IndexModelMismatchError, VectorIndex
 from .pdf_loader import load_directory
 from .retrieval import (
     RetrievalMode,
@@ -51,6 +51,8 @@ def _load_retriever(index_dir: Path, model: str, retrieval: str | None) -> Retri
     mode = _resolve_retrieval_mode(retrieval)
     try:
         return Retriever.from_index_path(index_dir, model, mode=mode)
+    except IndexModelMismatchError as e:
+        raise click.ClickException(str(e)) from e
     except EmbeddingModelError as e:
         raise click.ClickException(str(e)) from e
     except ValueError as e:
@@ -173,7 +175,7 @@ def ingest(
     embeddings = embedding_model.embed_texts(texts)
 
     click.echo("Building index...")
-    vector_index = VectorIndex(embedding_model.dimension)
+    vector_index = VectorIndex(embedding_model.dimension, model_name=model)
     vector_index.add_documents(chunks, embeddings)
 
     click.echo(f"Saving index to {index_dir}...")
