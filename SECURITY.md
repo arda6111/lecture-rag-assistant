@@ -32,6 +32,7 @@ Include the affected version, steps to reproduce, and the impact you expect.
 - Only load indexes you built yourself. `index.faiss` is a native binary format
   parsed by FAISS, and a crafted file can be unsafe. The loader rejects symlinks
   and invalid files, but it cannot make untrusted FAISS files safe.
-- CI runs `bandit` for static security analysis and `pip-audit` against the
-  installed environment.
+- CI runs `bandit` on `src`, `demo.py` and `scripts` for static security
+  analysis, `pip-audit` against the installed environment, and `gitleaks` over
+  the full git history.
 - Dependabot checks for dependency and GitHub Actions updates weekly.

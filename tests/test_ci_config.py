@@ -68,6 +68,16 @@ def test_linux_jobs_run_on_every_push_and_pull_request(name: str) -> None:
     assert "\n    if:" not in block
 
 
+def test_security_job_scans_code_and_full_history() -> None:
+    """The security job runs bandit on all code and gitleaks over the full history."""
+    block = _job_block("security")
+
+    assert "bandit -r src demo.py scripts" in block
+    assert "fetch-depth: 0" in block
+    assert 'gitleaks git --log-opts="--all"' in block
+    assert "sha256sum -c" in block
+
+
 def test_mypy_covers_demo_and_scripts() -> None:
     """CI type checks the package, the demo and the scripts."""
     assert "mypy src demo.py scripts" in CI_FILE.read_text(encoding="utf-8")
