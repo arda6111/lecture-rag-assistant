@@ -84,11 +84,14 @@ def evaluate_retrieval(
     k: int = 5,
     abstain_threshold: float | None = None,
     mode: RetrievalMode | None = None,
+    rerank: bool = False,
 ) -> dict[str, Any]:
     """Evaluate retrieval quality and, optionally, abstention decisions.
 
     Hit rate and MRR are computed over answerable questions only. Mean score
     keeps its original behaviour of averaging every retrieved result score.
+    Abstention always uses the first-stage dense cosine similarity, also when
+    reranking is enabled.
 
     Args:
         retriever: Retriever to evaluate
@@ -96,6 +99,7 @@ def evaluate_retrieval(
         k: Number of documents to retrieve
         abstain_threshold: Optional dense similarity threshold for abstention
         mode: Optional retrieval mode that overrides the retriever mode
+        rerank: Whether to rerank the first-stage candidates
 
     Returns:
         Dictionary of metrics
@@ -118,7 +122,10 @@ def evaluate_retrieval(
     abstain_true_negatives = 0
 
     for question in eval_set.questions:
-        outcome = retriever.search(question.question, k=k, mode=mode)
+        if rerank:
+            outcome = retriever.search(question.question, k=k, mode=mode, rerank=True)
+        else:
+            outcome = retriever.search(question.question, k=k, mode=mode)
         results = outcome.results
 
         found_rank = None
@@ -207,6 +214,7 @@ def run_full_evaluation(
     model_name: str,
     indexed_chunks: int,
     command: str,
+    rerank: bool = False,
 ) -> dict[str, Any]:
     """Evaluate every retrieval mode at k and at 1, plus a threshold sweep.
 
@@ -219,6 +227,7 @@ def run_full_evaluation(
         model_name: Embedding model name
         indexed_chunks: Number of chunks in the index
         command: Command that produced the results
+        rerank: Whether to rerank the first-stage candidates
 
     Returns:
         JSON-serializable results without timestamps or absolute paths
@@ -226,10 +235,20 @@ def run_full_evaluation(
     modes: dict[str, dict[str, Any]] = {}
     for mode in EVAL_MODES:
         at_k = evaluate_retrieval(
-            retriever, eval_set, k=k, abstain_threshold=abstain_threshold, mode=mode
+            retriever,
+            eval_set,
+            k=k,
+            abstain_threshold=abstain_threshold,
+            mode=mode,
+            rerank=rerank,
         )
         at_1 = evaluate_retrieval(
-            retriever, eval_set, k=1, abstain_threshold=abstain_threshold, mode=mode
+            retriever,
+            eval_set,
+            k=1,
+            abstain_threshold=abstain_threshold,
+            mode=mode,
+            rerank=rerank,
         )
         modes[mode] = {
             "score_type": SCORE_TYPES[mode],
@@ -248,7 +267,12 @@ def run_full_evaluation(
         {
             "threshold": threshold,
             "abstain_accuracy": evaluate_retrieval(
-                retriever, eval_set, k=k, abstain_threshold=threshold, mode="dense"
+                retriever,
+                eval_set,
+                k=k,
+                abstain_threshold=threshold,
+                mode="dense",
+                rerank=rerank,
             )["abstain_accuracy"],
         }
         for threshold in SWEEP_THRESHOLDS
@@ -269,6 +293,7 @@ def run_full_evaluation(
         },
         "modes": modes,
         "sweep": sweep,
+        "rerank": rerank,
     }
 
 

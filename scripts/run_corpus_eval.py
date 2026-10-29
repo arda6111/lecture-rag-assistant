@@ -2,16 +2,24 @@
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 from lecture_rag.chunking import chunk_documents
 from lecture_rag.embeddings import EmbeddingModel
-from lecture_rag.eval import EvalSet, evaluate_retrieval, load_eval_set, run_full_evaluation
+from lecture_rag.eval import (
+    EVAL_MODES,
+    EvalSet,
+    evaluate_retrieval,
+    load_eval_set,
+    run_full_evaluation,
+)
 from lecture_rag.index import VectorIndex
 from lecture_rag.models import Document
 from lecture_rag.pdf_loader import load_directory
-from lecture_rag.retrieval import Retriever
+from lecture_rag.rerank import DEFAULT_RERANK_MODEL, CrossEncoderReranker, Reranker
+from lecture_rag.retrieval import RetrievalMode, Retriever
 
 CHUNK_SIZES = (256, 512, 1024)
 CHUNK_OVERLAP = 64
@@ -85,9 +93,30 @@ def _chunk_size_row(
     }
 
 
+def _mean_latency_ms(
+    retriever: Retriever,
+    questions: list[str],
+    mode: RetrievalMode,
+    k: int,
+    rerank: bool,
+) -> float:
+    """Return mean per-query latency in milliseconds for one configuration."""
+    if not questions:
+        return 0.0
+
+    retriever.search(questions[0], k=k, mode=mode, rerank=rerank)
+    start = time.perf_counter()
+    for question in questions:
+        retriever.search(question, k=k, mode=mode, rerank=rerank)
+    elapsed = time.perf_counter() - start
+    return round(elapsed * 1000.0 / len(questions), 1)
+
+
 def compute_corpus_results(
     embedding_model: EmbeddingModel,
     model_name: str | None = None,
+    reranker: Reranker | None = None,
+    rerank_model_name: str | None = None,
     *,
     corpus_dir: Path = CORPUS_DIR,
     eval_file: Path = EVAL_FILE_PATH,
@@ -101,6 +130,8 @@ def compute_corpus_results(
     Args:
         embedding_model: Model used to embed chunks and queries
         model_name: Embedding model name recorded in the results
+        reranker: Optional reranker to evaluate on the default chunk size
+        rerank_model_name: Reranker model name recorded in the results
         corpus_dir: Directory containing the corpus PDFs
         eval_file: Evaluation question file
         chunk_sizes: Chunk sizes to evaluate
@@ -164,6 +195,38 @@ def compute_corpus_results(
     results["chunk_size"] = DEFAULT_CHUNK_SIZE
     results["chunk_overlap"] = chunk_overlap
     results["chunk_sizes"] = rows
+
+    if reranker is not None:
+        default_retriever.reranker = reranker
+        reranked = run_full_evaluation(
+            default_retriever,
+            eval_set,
+            eval_file=EVAL_FILE,
+            k=k,
+            abstain_threshold=abstain_threshold,
+            model_name=model_name,
+            indexed_chunks=len(default_chunks),
+            command=COMMAND,
+            rerank=True,
+        )
+        candidates = default_retriever.rerank_candidates
+        if candidates is None:
+            candidates = max(k * 4, 20)
+        results["reranker"] = {
+            "model": rerank_model_name,
+            "candidates": max(candidates, k),
+            "modes": reranked["modes"],
+        }
+
+        questions = [question.question for question in eval_set.questions]
+        results["latency_ms"] = {
+            mode: {
+                "base": _mean_latency_ms(default_retriever, questions, mode, k, rerank=False),
+                "rerank": _mean_latency_ms(default_retriever, questions, mode, k, rerank=True),
+            }
+            for mode in EVAL_MODES
+        }
+
     return results
 
 
@@ -190,14 +253,52 @@ def render_corpus_markdown(results: dict[str, Any]) -> str:
         "",
         "#### Retrieval mode comparison",
         "",
-        f"| Mode | Hit@{k} | MRR@{k} | Hit@1 | MRR@1 |",
-        "|------|-------|-------|-------|-------|",
     ]
-    for mode, metrics in results["modes"].items():
-        lines.append(
-            f"| {mode} | {metrics['hit_at_k']:.3f} | {metrics['mrr_at_k']:.3f} | "
-            f"{metrics['hit_at_1']:.3f} | {metrics['mrr_at_1']:.3f} |"
-        )
+    if results.get("reranker"):
+        reranked_modes = results["reranker"]["modes"]
+        lines += [
+            f"| Mode | Rerank | Hit@{k} | MRR@{k} | Hit@1 | MRR@1 |",
+            "|------|--------|-------|-------|-------|-------|",
+        ]
+        for mode, metrics in results["modes"].items():
+            reranked = reranked_modes[mode]
+            lines.append(
+                f"| {mode} | no | {metrics['hit_at_k']:.3f} | "
+                f"{metrics['mrr_at_k']:.3f} | {metrics['hit_at_1']:.3f} | "
+                f"{metrics['mrr_at_1']:.3f} |"
+            )
+            lines.append(
+                f"| {mode} | yes | {reranked['hit_at_k']:.3f} | "
+                f"{reranked['mrr_at_k']:.3f} | {reranked['hit_at_1']:.3f} | "
+                f"{reranked['mrr_at_1']:.3f} |"
+            )
+        lines += [
+            "",
+            "Abstention uses the first-stage dense similarity and is therefore "
+            "the same with and without rerank.",
+        ]
+        if "latency_ms" in results:
+            lines += [
+                "",
+                "| Mode | ms/query | ms/query with rerank |",
+                "|------|----------|----------------------|",
+            ]
+            for mode, latency in results["latency_ms"].items():
+                lines.append(f"| {mode} | {latency['base']:.1f} | {latency['rerank']:.1f} |")
+            lines += [
+                "",
+                "Latency was measured on one CPU machine and varies between runs.",
+            ]
+    else:
+        lines += [
+            f"| Mode | Hit@{k} | MRR@{k} | Hit@1 | MRR@1 |",
+            "|------|-------|-------|-------|-------|",
+        ]
+        for mode, metrics in results["modes"].items():
+            lines.append(
+                f"| {mode} | {metrics['hit_at_k']:.3f} | {metrics['mrr_at_k']:.3f} | "
+                f"{metrics['hit_at_1']:.3f} | {metrics['mrr_at_1']:.3f} |"
+            )
 
     dense = results["modes"]["dense"]
     lines += [
@@ -286,6 +387,16 @@ def main() -> None:
         help="Sentence-transformers model name",
     )
     parser.add_argument(
+        "--rerank-model",
+        default=DEFAULT_RERANK_MODEL,
+        help="Cross-encoder reranker model name",
+    )
+    parser.add_argument(
+        "--no-rerank",
+        action="store_true",
+        help="Disable cross-encoder reranking",
+    )
+    parser.add_argument(
         "--render-only",
         action="store_true",
         help="Re-render results.md and the README block from the committed results.json",
@@ -298,7 +409,13 @@ def main() -> None:
         return
 
     embedding_model = EmbeddingModel(args.model)
-    results = compute_corpus_results(embedding_model, args.model)
+    reranker = None if args.no_rerank else CrossEncoderReranker(args.rerank_model)
+    results = compute_corpus_results(
+        embedding_model,
+        args.model,
+        reranker=reranker,
+        rerank_model_name=None if args.no_rerank else args.rerank_model,
+    )
     _write_outputs(results)
 
 

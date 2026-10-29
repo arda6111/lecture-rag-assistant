@@ -14,6 +14,11 @@ from lecture_rag.index import (
     IndexModelMismatchError,
     InvalidIndexError,
 )
+from lecture_rag.rerank import (
+    CrossEncoderReranker,
+    RerankerError,
+    default_rerank_model,
+)
 from lecture_rag.retrieval import (
     RetrievalMode,
     Retriever,
@@ -45,6 +50,12 @@ def load_retriever(
         mode="dense",
         allow_model_mismatch=allow_model_mismatch,
     )
+
+
+@st.cache_resource
+def load_reranker(model_name: str) -> CrossEncoderReranker:
+    """Load the cross-encoder reranker (cached)."""
+    return CrossEncoderReranker(model_name)
 
 
 index_dir = st.sidebar.text_input(
@@ -95,6 +106,11 @@ allow_model_mismatch = st.sidebar.checkbox(
     value=False,
     key="allow_model_mismatch",
 )
+rerank = st.sidebar.checkbox(
+    "Rerank with a cross-encoder",
+    value=False,
+    key="rerank",
+)
 
 index_path = Path(index_dir)
 abs_index = Path(os.path.abspath(index_dir))
@@ -143,6 +159,14 @@ if retriever.model_warning is not None:
     )
     st.code(retriever.model_warning, language=None)
 
+if rerank:
+    try:
+        retriever.reranker = load_reranker(default_rerank_model())
+    except RerankerError as e:
+        st.error("Failed to load the reranker.")
+        st.code(str(e), language=None)
+        st.stop()
+
 query = st.text_input(
     "Ask a question:",
     placeholder="What is dynamic programming?",
@@ -151,7 +175,7 @@ query = st.text_input(
 
 if query:
     with st.spinner("Searching..."):
-        outcome = retriever.search(query, k=k, mode=retrieval_mode)
+        outcome = retriever.search(query, k=k, mode=retrieval_mode, rerank=rerank)
 
     if outcome.should_abstain(abstain_threshold):
         st.info("The lecture materials do not seem to cover this question.")

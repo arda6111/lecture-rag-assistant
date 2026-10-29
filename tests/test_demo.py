@@ -620,3 +620,72 @@ def test_hostile_chunk_and_answer_are_rendered_only_as_text(
         assert_rendered_safely(app, hostile_answer)
     finally:
         streamlit.cache_resource.clear()
+
+
+def test_rerank_checkbox_loads_reranker_and_labels_scores(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The rerank checkbox loads a fake reranker only when it is checked."""
+    index_dir = tmp_path / "index"
+    build_demo_index(index_dir)
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
+
+    instances: list[str] = []
+
+    class FakeReranker:
+        """Fake reranker that records construction."""
+
+        def __init__(self, model_name: str) -> None:
+            instances.append(model_name)
+
+        def score(self, query: str, texts: list[str]) -> list[float]:
+            return [float(index) for index in range(len(texts))]
+
+    def fake_from_index_path(
+        cls: type[Retriever],
+        index_path: Path,
+        model_name: str = "all-MiniLM-L6-v2",
+        mode: str | None = None,
+        rrf_k: int = 60,
+        allow_model_mismatch: bool = False,
+        reranker: object = None,
+        rerank_candidates: int | None = None,
+    ) -> Retriever:
+        return Retriever(
+            HashingEmbeddingModel(),
+            VectorIndex.load(index_path),
+            mode="dense",
+            reranker=reranker,  # type: ignore[arg-type]
+            rerank_candidates=rerank_candidates,
+        )
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fake_from_index_path),
+    )
+    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", FakeReranker)
+    streamlit.cache_resource.clear()
+
+    try:
+        app = run_demo()
+        assert not app.exception
+        assert app.checkbox(key="rerank").value is False
+
+        app.text_input(key="query").set_value("What is dynamic programming?")
+        app.run()
+
+        assert not app.exception
+        assert instances == []
+        assert not any("rerank:" in str(element.label) for element in app.expander)
+
+        app.checkbox(key="rerank").set_value(True)
+        app.run()
+
+        assert not app.exception
+        assert instances
+        assert any("rerank:" in str(element.label) for element in app.expander)
+    finally:
+        streamlit.cache_resource.clear()

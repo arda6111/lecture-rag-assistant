@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ScoreType = Literal["cosine", "bm25", "rrf"]
+ScoreType = Literal["cosine", "bm25", "rrf", "rerank"]
 
 
 class Document(BaseModel):

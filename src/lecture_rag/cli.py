@@ -21,6 +21,7 @@ from .eval import (
 from .generation import Generator
 from .index import IndexModelMismatchError, InvalidIndexError, VectorIndex
 from .pdf_loader import load_directory
+from .rerank import CrossEncoderReranker, RerankerError, default_rerank_model
 from .retrieval import (
     RetrievalMode,
     Retriever,
@@ -73,6 +74,38 @@ def _load_retriever(
     if retriever.model_warning is not None:
         click.echo(f"Warning: {retriever.model_warning}", err=True)
     return retriever
+
+
+def _validate_rerank_options(
+    rerank: bool,
+    rerank_candidates: int | None,
+    rerank_model: str | None,
+) -> None:
+    """Reject rerank-only options when reranking is disabled."""
+    if rerank:
+        return
+    if rerank_candidates is not None:
+        raise click.UsageError("--rerank-candidates requires --rerank")
+    if rerank_model is not None:
+        raise click.UsageError("--rerank-model requires --rerank")
+
+
+def _configure_reranker(
+    retriever: Retriever,
+    rerank: bool,
+    rerank_candidates: int | None,
+    rerank_model: str | None,
+) -> None:
+    """Attach a cross-encoder reranker to a retriever when requested."""
+    if not rerank:
+        return
+
+    model_name = rerank_model if rerank_model is not None else default_rerank_model()
+    try:
+        retriever.reranker = CrossEncoderReranker(model_name)
+    except RerankerError as e:
+        raise click.ClickException(str(e)) from e
+    retriever.rerank_candidates = rerank_candidates
 
 
 def _validate_output_dir(
@@ -246,6 +279,23 @@ def ingest(
     show_default=True,
     help="Minimum dense similarity required to answer",
 )
+@click.option(
+    "--rerank",
+    is_flag=True,
+    help="Rerank candidates with a cross-encoder",
+)
+@click.option(
+    "--rerank-candidates",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Candidates retrieved before reranking (default: max(4*k, 20))",
+)
+@click.option(
+    "--rerank-model",
+    default=None,
+    help="Cross-encoder model (default: LECTURE_RAG_RERANK_MODEL or "
+    "cross-encoder/ms-marco-MiniLM-L-6-v2)",
+)
 def ask(
     query: str,
     index_dir: Path,
@@ -255,8 +305,13 @@ def ask(
     mode: str,
     retrieval: str | None,
     abstain_threshold: float,
+    rerank: bool,
+    rerank_candidates: int | None,
+    rerank_model: str | None,
 ) -> None:
     """Ask a QUERY and get an answer with citations."""
+    _validate_rerank_options(rerank, rerank_candidates, rerank_model)
+
     try:
         generator = Generator.from_config(mode=mode)
     except ValueError as e:
@@ -264,9 +319,10 @@ def ask(
 
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
+    _configure_reranker(retriever, rerank, rerank_candidates, rerank_model)
 
     click.echo("Retrieving relevant documents...")
-    outcome = retriever.search(query, k=k)
+    outcome = retriever.search(query, k=k, rerank=rerank)
 
     if outcome.should_abstain(abstain_threshold):
         click.echo("The lecture materials do not seem to cover this question.")
@@ -360,6 +416,23 @@ def ask(
         "(cannot be combined with --compare or --sweep)"
     ),
 )
+@click.option(
+    "--rerank",
+    is_flag=True,
+    help="Rerank candidates with a cross-encoder",
+)
+@click.option(
+    "--rerank-candidates",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Candidates retrieved before reranking (default: max(4*k, 20))",
+)
+@click.option(
+    "--rerank-model",
+    default=None,
+    help="Cross-encoder model (default: LECTURE_RAG_RERANK_MODEL or "
+    "cross-encoder/ms-marco-MiniLM-L-6-v2)",
+)
 def eval(
     eval_file: Path,
     index_dir: Path,
@@ -371,8 +444,13 @@ def eval(
     sweep: bool,
     abstain_threshold: float,
     output: Path | None,
+    rerank: bool,
+    rerank_candidates: int | None,
+    rerank_model: str | None,
 ) -> None:
     """Run evaluation on the retrieval system."""
+    _validate_rerank_options(rerank, rerank_candidates, rerank_model)
+
     if output is not None:
         if compare or sweep:
             raise click.UsageError(
@@ -395,13 +473,21 @@ def eval(
 
     click.echo(f"Loading index from {index_dir}...")
     retriever = _load_retriever(index_dir, model, retrieval, allow_model_mismatch)
+    _configure_reranker(retriever, rerank, rerank_candidates, rerank_model)
 
     if output is not None:
         _prepare_output_dir(output)
         command = (
             f"lecture-rag eval --eval-file {eval_file.as_posix()} --k {k} "
-            f"--abstain-threshold {abstain_threshold:.2f} --output {output.as_posix()}"
+            f"--abstain-threshold {abstain_threshold:.2f}"
         )
+        if rerank:
+            command += " --rerank"
+            if rerank_candidates is not None:
+                command += f" --rerank-candidates {rerank_candidates}"
+            if rerank_model is not None:
+                command += f" --rerank-model {rerank_model}"
+        command += f" --output {output.as_posix()}"
         click.echo(f"Evaluating all modes on {len(eval_set.questions)} questions...")
         results = run_full_evaluation(
             retriever,
@@ -412,6 +498,7 @@ def eval(
             model_name=model,
             indexed_chunks=len(retriever.index.documents),
             command=command,
+            rerank=rerank,
         )
         try:
             (output / "results.json").write_text(
@@ -441,6 +528,7 @@ def eval(
                 k=k,
                 abstain_threshold=threshold,
                 mode=sweep_mode,
+                rerank=rerank,
             )
             click.echo(f"| {threshold:.2f} | {metrics['abstain_accuracy']:.3f} |")
         return
@@ -457,6 +545,7 @@ def eval(
                 k=k,
                 abstain_threshold=abstain_threshold,
                 mode=mode_name,
+                rerank=rerank,
             )
             click.echo(
                 f"| {mode_name} | {metrics[f'hit_at_{k}']:.3f} | "
@@ -471,6 +560,7 @@ def eval(
         eval_set,
         k=k,
         abstain_threshold=abstain_threshold,
+        rerank=rerank,
     )
 
     click.echo("\n" + "=" * 80)

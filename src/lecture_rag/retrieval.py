@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from .bm25 import BM25Index
 from .index import VectorIndex
 from .models import Document, RetrievalResult, ScoreType
+from .rerank import Reranker
+from .rerank import rerank as rerank_results
 
 if TYPE_CHECKING:
     from .embeddings import EmbeddingModel
@@ -128,11 +130,17 @@ def reciprocal_rank_fusion(
 
 
 class RetrievalOutcome(BaseModel):
-    """Results of one search together with the dense abstain signal."""
+    """Results of one search together with the dense abstain signal.
+
+    The abstain signal is always the first-stage dense cosine similarity, also
+    when reranking is enabled. Cross-encoder scores are unbounded logits on a
+    different scale and are never compared with the abstain threshold.
+    """
 
     results: list[RetrievalResult]
     max_dense_similarity: float
     mode: RetrievalMode
+    reranked: bool = False
 
     def should_abstain(self, threshold: float) -> bool:
         """Return True if the best dense similarity is below the threshold."""
@@ -148,6 +156,8 @@ class Retriever:
         index: VectorIndex,
         mode: RetrievalMode | None = None,
         rrf_k: int = 60,
+        reranker: Reranker | None = None,
+        rerank_candidates: int | None = None,
     ) -> None:
         """Initialize the retriever.
 
@@ -156,11 +166,16 @@ class Retriever:
             index: Vector index for similarity search
             mode: Retrieval mode, defaults to LECTURE_RAG_RETRIEVAL_MODE or dense
             rrf_k: Reciprocal rank fusion constant
+            reranker: Optional reranker used when rerank is requested
+            rerank_candidates: Number of candidates retrieved before reranking,
+                or None to use max(4*k, 20)
         """
         self.embedding_model = embedding_model
         self.index = index
         self.mode = normalize_mode(mode) if mode is not None else default_retrieval_mode()
         self.rrf_k = rrf_k
+        self.reranker = reranker
+        self.rerank_candidates = rerank_candidates
         self.model_warning: str | None = None
         self._bm25_index: BM25Index | None = None
 
@@ -185,8 +200,10 @@ class Retriever:
     def max_dense_similarity(self, query: str, k: int = 5) -> float:
         """Return the top dense cosine similarity for a query.
 
-        The abstain signal always uses dense cosine similarity because BM25
-        and RRF scores are not on a comparable scale.
+        The abstain signal always uses dense cosine similarity because BM25,
+        RRF and cross-encoder scores are not on a comparable scale. It is the
+        first-stage dense similarity and does not change when reranking is
+        enabled.
 
         Args:
             query: Query string
@@ -209,13 +226,8 @@ class Retriever:
         """
         return self.search(query, mode="dense").should_abstain(threshold)
 
-    def search(
-        self,
-        query: str,
-        k: int = 5,
-        mode: RetrievalMode | None = None,
-    ) -> RetrievalOutcome:
-        """Search once and return results plus the dense abstain signal.
+    def _first_stage(self, query: str, k: int, mode: RetrievalMode) -> RetrievalOutcome:
+        """Run one first-stage search in the given mode.
 
         The query is embedded once. The dense results are reused for the
         abstain signal, for dense mode and for hybrid fusion.
@@ -223,29 +235,26 @@ class Retriever:
         Args:
             query: Query string
             k: Number of documents to retrieve
-            mode: Optional retrieval mode that overrides the instance mode
+            mode: Retrieval mode for this search
 
         Returns:
-            RetrievalOutcome with results sorted by score descending
+            RetrievalOutcome with first-stage results sorted by score descending
         """
-        active_mode = self.mode if mode is None else normalize_mode(mode)
         candidate_k = max(k * 4, 20)
 
         query_embedding = self.embedding_model.embed_query(query)
-        dense_k = candidate_k if active_mode == "hybrid" else max(k, 1)
+        dense_k = candidate_k if mode == "hybrid" else max(k, 1)
         dense = self.index.search(query_embedding, k=dense_k)
         max_similarity = max((float(score) for _, score in dense), default=0.0)
 
         if k <= 0:
-            return RetrievalOutcome(
-                results=[], max_dense_similarity=max_similarity, mode=active_mode
-            )
+            return RetrievalOutcome(results=[], max_dense_similarity=max_similarity, mode=mode)
 
         score_type: ScoreType
-        if active_mode == "dense":
+        if mode == "dense":
             results = dense[:k]
             score_type = "cosine"
-        elif active_mode == "bm25":
+        elif mode == "bm25":
             results = self._get_bm25_index().search(query, k)
             score_type = "bm25"
         else:
@@ -265,7 +274,51 @@ class Retriever:
                 for document, score in results
             ],
             max_dense_similarity=max_similarity,
+            mode=mode,
+        )
+
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        mode: RetrievalMode | None = None,
+        rerank: bool = False,
+    ) -> RetrievalOutcome:
+        """Search once and return results plus the dense abstain signal.
+
+        When reranking is enabled, a larger candidate pool is retrieved with
+        the active first-stage mode and then reranked down to k. The abstain
+        signal always remains the first-stage dense cosine similarity because
+        cross-encoder logits are unbounded and on a different scale.
+
+        Args:
+            query: Query string
+            k: Number of documents to retrieve
+            mode: Optional retrieval mode that overrides the instance mode
+            rerank: Whether to rerank the first-stage candidates
+
+        Returns:
+            RetrievalOutcome with results sorted by score descending
+
+        Raises:
+            ValueError: If rerank is requested without a configured reranker
+        """
+        active_mode = self.mode if mode is None else normalize_mode(mode)
+
+        if not rerank:
+            return self._first_stage(query, k, active_mode)
+
+        if self.reranker is None:
+            raise ValueError("Reranking requires a configured reranker")
+
+        pool_size = self.rerank_candidates if self.rerank_candidates is not None else max(k * 4, 20)
+        pool_size = max(pool_size, k)
+        first_stage = self._first_stage(query, pool_size, active_mode)
+        return RetrievalOutcome(
+            results=rerank_results(query, first_stage.results, self.reranker, k),
+            max_dense_similarity=first_stage.max_dense_similarity,
             mode=active_mode,
+            reranked=True,
         )
 
     def retrieve(
@@ -273,6 +326,7 @@ class Retriever:
         query: str,
         k: int = 5,
         mode: RetrievalMode | None = None,
+        rerank: bool = False,
     ) -> list[RetrievalResult]:
         """Retrieve the top k documents for a query.
 
@@ -280,11 +334,12 @@ class Retriever:
             query: Query string
             k: Number of documents to retrieve
             mode: Optional retrieval mode that overrides the instance mode
+            rerank: Whether to rerank the first-stage candidates
 
         Returns:
             List of RetrievalResult objects, sorted by score descending
         """
-        return self.search(query, k=k, mode=mode).results
+        return self.search(query, k=k, mode=mode, rerank=rerank).results
 
     @classmethod
     def from_index_path(
@@ -294,6 +349,8 @@ class Retriever:
         mode: RetrievalMode | None = None,
         rrf_k: int = 60,
         allow_model_mismatch: bool = False,
+        reranker: Reranker | None = None,
+        rerank_candidates: int | None = None,
     ) -> "Retriever":
         """Load a retriever from a saved index.
 
@@ -304,6 +361,9 @@ class Retriever:
             rrf_k: Reciprocal rank fusion constant
             allow_model_mismatch: Continue with a warning when the model name
                 differs from the model the index was built with
+            reranker: Optional reranker used when rerank is requested
+            rerank_candidates: Number of candidates retrieved before reranking,
+                or None to use max(4*k, 20)
 
         Returns:
             Initialized Retriever instance
@@ -317,6 +377,13 @@ class Retriever:
         )
         embedding_model = EmbeddingModel(model_name)
         index.check_dimension(model_name, embedding_model.dimension)
-        retriever = cls(embedding_model, index, mode=mode, rrf_k=rrf_k)
+        retriever = cls(
+            embedding_model,
+            index,
+            mode=mode,
+            rrf_k=rrf_k,
+            reranker=reranker,
+            rerank_candidates=rerank_candidates,
+        )
         retriever.model_warning = warning
         return retriever
