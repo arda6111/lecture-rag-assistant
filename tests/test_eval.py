@@ -67,11 +67,10 @@ def result(document: Document, score: float = 1.0) -> RetrievalResult:
 
 
 def test_eval_question_answerable_property() -> None:
-    """Test that answerable depends on both expected fields being set."""
+    """Test that answerable depends on an expected file and at least one page."""
     assert EvalQuestion(question="q", expected_file="a.pdf", expected_page=1).answerable
+    assert EvalQuestion(question="q", expected_file="a.pdf", expected_pages=[1, 2]).answerable
     assert not EvalQuestion(question="q").answerable
-    assert not EvalQuestion(question="q", expected_file="a.pdf").answerable
-    assert not EvalQuestion(question="q", expected_page=1).answerable
 
 
 def test_evaluate_retrieval_uses_answerable_questions_for_hit_and_mrr() -> None:

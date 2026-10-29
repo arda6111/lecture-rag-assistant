@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from .retrieval import RetrievalMode, Retriever
 
@@ -18,11 +18,38 @@ class EvalQuestion(BaseModel):
     question: str
     expected_file: str | None = None
     expected_page: int | None = None
+    expected_pages: list[int] | None = None
+
+    @model_validator(mode="after")
+    def _validate_expected_pages(self) -> "EvalQuestion":
+        """Validate that expected file and page fields are consistent."""
+        if self.expected_page is not None and self.expected_pages is not None:
+            raise ValueError("expected_page and expected_pages cannot both be set")
+        if self.expected_pages is not None and not self.expected_pages:
+            raise ValueError("expected_pages must not be empty")
+
+        pages = self.pages
+        if any(page < 1 for page in pages):
+            raise ValueError("expected pages must be greater than or equal to 1")
+        if self.expected_file is not None and not pages:
+            raise ValueError("expected_file requires expected_page or expected_pages")
+        if self.expected_file is None and pages:
+            raise ValueError("expected pages require expected_file")
+        return self
+
+    @property
+    def pages(self) -> frozenset[int]:
+        """Expected page numbers, or an empty set for unanswerable questions."""
+        if self.expected_pages is not None:
+            return frozenset(self.expected_pages)
+        if self.expected_page is not None:
+            return frozenset({self.expected_page})
+        return frozenset()
 
     @property
     def answerable(self) -> bool:
         """Whether the question has a known answer in the corpus."""
-        return self.expected_file is not None and self.expected_page is not None
+        return self.expected_file is not None and bool(self.pages)
 
 
 class EvalSet(BaseModel):
@@ -102,7 +129,7 @@ def evaluate_retrieval(
             if (
                 question.answerable
                 and doc.file_name == question.expected_file
-                and doc.page_number == question.expected_page
+                and doc.page_number in question.pages
             ):
                 if found_rank is None:
                     found_rank = rank
