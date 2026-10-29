@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shlex
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def _invalid_error(path: Path, reason: str) -> InvalidIndexError:
 def _metadata_error(path: Path, reason: str) -> IndexMetadataError:
     """Build a consistent index metadata error."""
     return IndexMetadataError(
-        f"Invalid index metadata in {path}: {reason}. "
+        f"Invalid index at {path}: {reason}. "
         "Re-run `lecture-rag ingest` to rebuild the index."
     )
 
@@ -127,15 +128,15 @@ class VectorIndex:
         shown_index = shorten_model_name(self.model_name)
         if not allow_model_mismatch:
             raise IndexModelMismatchError(
-                f"Embedding model {shown!r} does not match the model the index "
-                f"was built with ({shown_index!r}). {_model_hint(self.model_name)} "
+                f"Embedding model '{shown}' does not match the model the index "
+                f"was built with ('{shown_index}'). {_model_hint(self.model_name)} "
                 "or re-run `lecture-rag ingest` with this model, or pass "
                 "--allow-model-mismatch to continue anyway."
             )
 
         return (
-            f"Embedding model {shown!r} differs from the index model "
-            f"{shown_index!r}; results may be unreliable."
+            f"Embedding model '{shown}' differs from the index model "
+            f"'{shown_index}'; results may be unreliable."
         )
 
     def check_dimension(self, model_name: str, dimension: int) -> None:
@@ -156,13 +157,13 @@ class VectorIndex:
         if self.model_name is not None:
             shown_index = shorten_model_name(self.model_name)
             raise IndexModelMismatchError(
-                f"Embedding model {shown!r} produces {dimension}-dimensional "
-                f"vectors, but the index was built with {shown_index!r} "
+                f"Embedding model '{shown}' produces {dimension}-dimensional "
+                f"vectors, but the index was built with '{shown_index}' "
                 f"({self.dimension} dimensions). {_model_hint(self.model_name)} "
                 "or re-run `lecture-rag ingest` with this model."
             )
         raise IndexModelMismatchError(
-            f"Embedding model {shown!r} produces {dimension}-dimensional "
+            f"Embedding model '{shown}' produces {dimension}-dimensional "
             f"vectors, but the index was built with a {self.dimension}-dimensional "
             "model. Use the model the index was built with or re-run "
             "`lecture-rag ingest` with this model."
@@ -282,6 +283,15 @@ class VectorIndex:
         if path.is_symlink():
             raise _invalid_error(path, "index directory is a symlink")
 
+        if path.resolve() != Path(os.path.normpath(path.absolute())):
+            raise _invalid_error(path, "the index path contains a symlink")
+
+        if not path.exists():
+            raise InvalidIndexError(
+                f"Index directory not found: {path}. "
+                "Run `lecture-rag ingest` to build the index."
+            )
+
         if not path.is_dir():
             raise _invalid_error(
                 path,
@@ -305,9 +315,10 @@ class VectorIndex:
         try:
             faiss_index = faiss.read_index(str(index_path))
         except RuntimeError as e:
+            logger.debug("Failed to read %s: %s", index_path, e)
             raise _invalid_error(
                 index_path,
-                f"cannot read index.faiss ({e})",
+                "index.faiss is corrupt or not a FAISS index",
             ) from e
 
         try:
@@ -362,24 +373,27 @@ class VectorIndex:
 
             dimension = metadata.get("dimension")
             model_name = metadata.get("model_name")
+            valid_model_name = model_name is None or (
+                isinstance(model_name, str) and model_name.strip() != ""
+            )
             if (
                 "dimension" not in metadata
                 or "model_name" not in metadata
                 or not isinstance(dimension, int)
                 or isinstance(dimension, bool)
-                or not (model_name is None or isinstance(model_name, str))
+                or not valid_model_name
             ):
                 raise _metadata_error(
                     path,
-                    "index_meta.json must contain a model_name (string or null) and an "
+                    "index_meta.json must contain a model_name (non-empty string or null) and an "
                     "integer dimension",
                 )
 
             if dimension != faiss_index.d:
                 raise _metadata_error(
                     path,
-                    f"metadata dimension {dimension} does not match the FAISS "
-                    f"index dimension {faiss_index.d}",
+                    f"index_meta.json dimension {dimension} does not match the "
+                    f"FAISS index dimension {faiss_index.d}",
                 )
         else:
             dimension = faiss_index.d

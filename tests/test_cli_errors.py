@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from lecture_rag.cli import main
+from lecture_rag.retrieval import Retriever
 from tests.conftest import HashingEmbeddingModel
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -567,3 +568,63 @@ def test_ask_rejects_invalid_index_cleanly(
 
     assert_clean_failure(result)
     assert "Re-run `lecture-rag ingest` to rebuild the index." in result.output
+
+def test_ask_rejects_dangling_symlinked_index_cleanly(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    """A dangling symlinked index directory fails with the symlink error."""
+    link_path = tmp_path / "dangling_index"
+    os.symlink(tmp_path / "missing_index", link_path)
+
+    result = runner.invoke(main, ask_args(link_path))
+
+    assert_clean_failure(result)
+    assert "symlink" in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_nonexistent_index_fails_cleanly(
+    runner: CliRunner,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    """A missing index directory fails with a clear message and no traceback."""
+    missing = tmp_path / "missing_index"
+    args = ask_args(missing) if command == "ask" else eval_args(missing)
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "Index directory not found" in result.output
+    assert "Run `lecture-rag ingest` to build the index." in result.output
+
+
+@pytest.mark.parametrize("command", ["ask", "eval"])
+def test_value_error_fallback_has_no_ingest_first_hint(
+    runner: CliRunner,
+    index_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    """An unexpected ValueError is reported without the generic ingest hint."""
+    def fail_from_index_path(
+        cls: type[Retriever],
+        *args: object,
+        **kwargs: object,
+    ) -> Retriever:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(
+        Retriever,
+        "from_index_path",
+        classmethod(fail_from_index_path),
+    )
+    args = ask_args(index_dir) if command == "ask" else eval_args(index_dir)
+
+    result = runner.invoke(main, args)
+
+    assert_clean_failure(result)
+    assert "Could not load the index" in result.output
+    assert "boom" in result.output
+    assert "Run `lecture-rag ingest` first" not in result.output

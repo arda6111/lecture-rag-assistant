@@ -178,6 +178,8 @@ def test_load_legacy_index_without_metadata(
         {"dimension": "384", "model_name": "model-a"},
         {"dimension": 384, "model_name": 1},
         {"dimension": True, "model_name": "model-a"},
+        {"dimension": 384, "model_name": ""},
+        {"dimension": 384, "model_name": "   "},
     ],
 )
 def test_load_rejects_invalid_metadata(
@@ -193,10 +195,12 @@ def test_load_rejects_invalid_metadata(
     index.save(index_path)
     (index_path / "index_meta.json").write_text(json.dumps(metadata), encoding="utf-8")
 
-    with pytest.raises(IndexMetadataError, match="Invalid index metadata") as exc_info:
+    with pytest.raises(IndexMetadataError, match="Invalid index at") as exc_info:
         VectorIndex.load(index_path)
 
-    assert "Re-run `lecture-rag ingest`" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "index_meta.json" in message
+    assert "Re-run `lecture-rag ingest`" in message
 
 
 def test_load_rejects_malformed_metadata(
@@ -211,10 +215,12 @@ def test_load_rejects_malformed_metadata(
     index.save(index_path)
     (index_path / "index_meta.json").write_text("{not json", encoding="utf-8")
 
-    with pytest.raises(IndexMetadataError, match="Invalid index metadata") as exc_info:
+    with pytest.raises(IndexMetadataError, match="Invalid index at") as exc_info:
         VectorIndex.load(index_path)
 
-    assert "Re-run `lecture-rag ingest`" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "index_meta.json" in message
+    assert "Re-run `lecture-rag ingest`" in message
 
 
 def test_load_rejects_metadata_dimension_mismatch(
@@ -464,6 +470,38 @@ def test_load_rejects_symlinked_index_directory(
     assert str(exc_info.value).endswith(REBUILD_SUFFIX)
 
 
+def test_load_rejects_index_under_symlinked_parent(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """An index inside a symlinked parent directory is rejected."""
+    real_parent = temp_dir / "real_parent"
+    real_parent.mkdir()
+    save_test_index(real_parent, sample_documents, sample_embeddings)
+    linked_parent = temp_dir / "linked_parent"
+    os.symlink(real_parent, linked_parent)
+
+    with pytest.raises(InvalidIndexError, match="contains a symlink") as exc_info:
+        VectorIndex.load(linked_parent / "saved_index")
+
+    assert str(exc_info.value).endswith(REBUILD_SUFFIX)
+
+
+def test_load_accepts_path_with_parent_components(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """A path with '..' components that leads to a real index still loads."""
+    index_path = save_test_index(temp_dir, sample_documents, sample_embeddings)
+    (temp_dir / "sibling").mkdir()
+
+    loaded = VectorIndex.load(temp_dir / "sibling" / ".." / index_path.name)
+
+    assert len(loaded.documents) == len(sample_documents)
+
+
 def test_load_rejects_index_path_that_is_not_a_directory(
     temp_dir: Path,
 ) -> None:
@@ -560,6 +598,10 @@ def test_load_rejects_corrupt_faiss_index(
     message = str(exc_info.value)
     assert str(faiss_path) in message
     assert message.endswith(REBUILD_SUFFIX)
+    assert "corrupt" in message
+    assert "Error in" not in message
+    assert "faiss/" not in message
+    assert len(message) < 300 + len(str(faiss_path))
 
 
 @pytest.mark.parametrize(
@@ -612,3 +654,14 @@ def test_check_model_name_omits_hint_for_shortened_model_name() -> None:
     assert "--model " not in message
     assert "shortened" in message
     assert long_name not in message
+
+def test_check_model_name_shows_one_backslash() -> None:
+    """A model name with a backslash is shown with exactly one backslash."""
+    index = VectorIndex(dimension=384, model_name="dir\\model")
+
+    with pytest.raises(IndexModelMismatchError) as exc_info:
+        index.check_model_name("other-model")
+
+    message = str(exc_info.value)
+    assert "'dir\\model'" in message
+    assert "dir\\\\model" not in message

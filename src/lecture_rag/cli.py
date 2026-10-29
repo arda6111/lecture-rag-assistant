@@ -68,7 +68,7 @@ def _load_retriever(
     except EmbeddingModelError as e:
         raise click.ClickException(str(e)) from e
     except ValueError as e:
-        raise click.ClickException(f"{e}. Run `lecture-rag ingest` first.") from e
+        raise click.ClickException(f"Could not load the index from {index_dir}: {e}") from e
 
     if retriever.model_warning is not None:
         click.echo(f"Warning: {retriever.model_warning}", err=True)
@@ -204,7 +204,7 @@ def ingest(
 @click.argument("query")
 @click.option(
     "--index-dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    type=click.Path(file_okay=False, path_type=Path),
     default="index",
     help="Directory containing the index",
 )
@@ -304,7 +304,7 @@ def ask(
 )
 @click.option(
     "--index-dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    type=click.Path(file_okay=False, path_type=Path),
     default="index",
     help="Directory containing the index",
 )

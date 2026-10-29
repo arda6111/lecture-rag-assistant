@@ -33,6 +33,35 @@ def test_embedding_model_wraps_load_errors(monkeypatch: pytest.MonkeyPatch) -> N
         EmbeddingModel("nope")
 
 
+def test_embedding_model_load_error_shows_one_backslash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model name with a backslash is shown with exactly one backslash."""
+    monkeypatch.setattr("lecture_rag.embeddings.SentenceTransformer", raise_oserror)
+
+    with pytest.raises(EmbeddingModelError) as exc_info:
+        EmbeddingModel("dir\\model")
+
+    message = str(exc_info.value)
+    assert "'dir\\model'" in message
+    assert "dir\\\\model" not in message
+
+def test_embedding_model_dimension_error_shows_one_backslash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The missing-dimension error also shows a single backslash."""
+    monkeypatch.setattr(
+        "lecture_rag.embeddings.SentenceTransformer",
+        lambda model_name: NoDimensionModel(),
+    )
+
+    with pytest.raises(EmbeddingModelError) as exc_info:
+        EmbeddingModel("dir\\model")
+
+    message = str(exc_info.value)
+    assert "'dir\\model'" in message
+    assert "dir\\\\model" not in message
+
 def test_ingest_reports_embedding_model_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
