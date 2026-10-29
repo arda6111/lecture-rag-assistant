@@ -17,7 +17,7 @@ Key features:
 - **Page-level citations** with file names and page numbers
 - **Dense, BM25 and hybrid retrieval** combined with Reciprocal Rank Fusion
 - **Abstention** when no indexed chunk is similar enough to the question
-- **Evaluation harness** with committed results in `eval/results.md`
+- **Evaluation harness** with committed results in `eval/results.md` (sample lectures) and `eval/corpus/results.md` (the real corpus)
 
 ## Architecture
 
@@ -92,7 +92,7 @@ For the larger corpus, use a separate index directory:
 lecture-rag ingest data/corpus --index-dir index-corpus
 ```
 
-With all-MiniLM-L6-v2 this gives 861 chunks from 163 pages.
+This gives 861 chunks from 163 pages with the default chunk size of 512 and overlap of 64 (the count depends only on the chunking, not on the embedding model). The same count is recorded as `indexed_chunks` in `eval/corpus/results.json`, and a test checks both against the corpus.
 
 Put your own lecture PDFs in `data/local/`, which is ignored by git, so course material you are not allowed to share never gets committed.
 
@@ -279,7 +279,72 @@ lecture-rag eval --output eval
 - 0.35 is the midpoint of the 0.30 to 0.40 plateau of the sweep.
 - The sample corpus has only 4 pages, so dense and hybrid retrieval are saturated and BM25 misses one question at rank 1. These numbers are a sanity check, not a benchmark. A larger corpus is needed to compare the modes meaningfully.
 
-An evaluation on `data/corpus/` with the real embedding model will be added in a follow-up change.
+### Real corpus (data/corpus)
+
+The block below is generated from `eval/corpus/results.json` by `scripts/run_corpus_eval.py`, and a test checks that it matches the committed results, so none of its numbers are typed by hand.
+
+**Eval set:** `eval/corpus/eval_set.json` has answerable questions over all six PDFs and a set of unanswerable ones. Each answerable question names its expected file and one or more expected pages (`expected_pages`), and was written by reading those pages. A retrieved chunk counts as a hit when it comes from the expected file and one of the expected pages. Most unanswerable questions are off-topic; two are near-domain (support vector machines and quicksort) and are not covered by the corpus. Hit@k and MRR are computed over the answerable questions, abstain metrics over all questions.
+
+**Reproduce:**
+
+```bash
+pip install -e ".[dev]"
+python scripts/run_corpus_eval.py                # downloads all-MiniLM-L6-v2 on the first run
+python scripts/run_corpus_eval.py --render-only  # rebuild results.md and this block from results.json
+```
+
+The script builds in-memory indexes of `data/corpus` at chunk sizes 256, 512 and 1024 (overlap 64), evaluates all three retrieval modes at chunk size 512, and writes `eval/corpus/results.json`, `eval/corpus/results.md` and the block below. It does not write an index directory. CI does not run it and never downloads the model; the tests run the same code offline with the hashing test model and compare the committed results with this README.
+
+<!-- corpus-eval:start -->
+
+The corpus in `data/corpus` contains 6 PDFs with 163 loaded pages, indexed as 861 chunks at chunk size 512 with `all-MiniLM-L6-v2`, and evaluated on 58 questions (48 answerable, 10 unanswerable) at k=5 with an abstain threshold of 0.35.
+
+#### Retrieval mode comparison
+
+| Mode | Hit@5 | MRR@5 | Hit@1 | MRR@1 |
+|------|-------|-------|-------|-------|
+| dense | 0.938 | 0.775 | 0.646 | 0.646 |
+| bm25 | 0.979 | 0.841 | 0.750 | 0.750 |
+| hybrid | 0.958 | 0.830 | 0.729 | 0.729 |
+
+#### Abstention at threshold 0.35 (dense)
+
+| Metric | Value |
+|--------|-------|
+| Abstain accuracy | 0.966 |
+| Abstain precision | 1.000 |
+| Abstain recall | 0.800 |
+| Hit@5 after abstain | 0.938 |
+
+#### Threshold sweep (dense)
+
+| Threshold | Abstain acc |
+|-----------|-------------|
+| 0.20 | 0.931 |
+| 0.25 | 0.948 |
+| 0.30 | 0.948 |
+| 0.35 | 0.966 |
+| 0.40 | 0.966 |
+| 0.45 | 0.983 |
+| 0.50 | 1.000 |
+| 0.55 | 0.948 |
+| 0.60 | 0.914 |
+
+#### Chunk size comparison
+
+| Chunk size | Chunks | Hit@5 | MRR@5 | Abstain acc |
+|------------|--------|-------|-------|-------------|
+| 256 | 1895 | 0.938 | 0.785 | 0.948 |
+| 512 | 861 | 0.938 | 0.775 | 0.966 |
+| 1024 | 450 | 0.917 | 0.734 | 0.966 |
+
+<!-- corpus-eval:end -->
+
+**What this shows, and what it does not:**
+- BM25 and hybrid retrieval rank the expected page higher than dense retrieval on this set. Many questions reuse terms from the text (tool and algorithm names such as DeepConcolic, EKiML or Q-learning), which favours keyword matching.
+- The abstain threshold of 0.35 is the default chosen on the sample lectures and was not tuned on these questions. The sweep is shown for information only; picking its best value would fit the threshold to the same questions it is measured on.
+- The two near-domain questions score above the threshold and are answered instead of rejected, which is why abstain recall is below 1. A single dense similarity cannot tell a related topic from one the lectures actually cover.
+- Limitations: a small corpus of six documents; questions written by us after reading the pages, so they often share wording with the text and are easier than real student questions; page-level labels, some of which list several pages; one embedding model and one run.
 
 ## Testing
 
@@ -290,7 +355,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`mypy src demo.py scripts` is run in CI.
+CI also runs `ruff check src tests demo.py scripts`, `ruff format --check src tests demo.py scripts` and `mypy src demo.py scripts`.
 
 The tests cover PDF loading and ingest limits, chunking, the FAISS and BM25 indexes, the three retrieval modes and RRF, abstention and eval metrics, answer generation, and the CLI (including an ingest and ask run on the sample PDFs and input validation errors).
 
@@ -330,7 +395,7 @@ lecture-rag-assistant/
 - No re-ranking step after retrieval
 - Simple chunking (fixed size, no semantic splitting)
 - Single index (no multi-collection support)
-- The bundled eval set is small (33 questions over 4 pages), so it cannot separate the retrieval modes
+- The eval sets are small and written by us: 33 questions over the 4 sample pages, and a few dozen questions over the 6 corpus PDFs
 
 **Done:**
 - [x] Hybrid search (dense + BM25 with Reciprocal Rank Fusion)
@@ -339,7 +404,7 @@ lecture-rag-assistant/
 
 **Planned improvements:**
 - [ ] Add re-ranking with a cross-encoder
-- [ ] Evaluate on a larger set of real lecture slides
+- [ ] Evaluate on real lecture slides with questions written by students
 - [ ] Support semantic chunking based on document structure
 - [ ] Add conversation memory for follow-up questions
 - [ ] Build a web API with FastAPI

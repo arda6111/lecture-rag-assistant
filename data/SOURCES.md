@@ -7,6 +7,7 @@ notes on machine learning and software engineering for machine learning, downloa
 from arXiv. Each one is licensed under the Creative Commons Attribution 4.0
 International license (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/),
 as stated on its arXiv abstract page for the version listed below.
+The licenses were checked on each abstract page on 2026-10-29.
 
 The only change is the file name: each file was renamed to a short topic slug
 followed by its arXiv identifier and version. The contents are byte-for-byte the
