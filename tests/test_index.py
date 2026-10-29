@@ -684,3 +684,51 @@ def test_check_model_name_shows_one_backslash() -> None:
     message = str(exc_info.value)
     assert "'dir\\model'" in message
     assert "dir\\\\model" not in message
+
+
+def test_save_rejects_symlinked_index_directory(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+) -> None:
+    """Saving through a symlinked index directory writes nothing to its target."""
+    index = VectorIndex(dimension=384, model_name="model-a")
+    index.add_documents(sample_documents, sample_embeddings)
+    destination = temp_dir / "destination"
+    destination.mkdir()
+    link_path = temp_dir / "linked_index"
+    os.symlink(destination, link_path)
+
+    with pytest.raises(InvalidIndexError, match="symlink") as exc_info:
+        index.save(link_path)
+
+    message = str(exc_info.value)
+    assert "Use the real (non-symlink) path" in message
+    assert "Re-run" not in message
+    assert list(destination.iterdir()) == []
+
+
+@pytest.mark.parametrize("file_name", ["index.faiss", "documents.json", "index_meta.json"])
+def test_save_rejects_symlinked_index_file(
+    sample_documents: list[Document],
+    sample_embeddings: np.ndarray,
+    temp_dir: Path,
+    file_name: str,
+) -> None:
+    """Saving refuses to write through a symlinked index file."""
+    index = VectorIndex(dimension=384, model_name="model-a")
+    index.add_documents(sample_documents, sample_embeddings)
+    index_path = temp_dir / "symlinked_file_index"
+    index.save(index_path)
+
+    file_path = index_path / file_name
+    target = temp_dir / f"target_{file_name}"
+    file_path.rename(target)
+    os.symlink(target, file_path)
+
+    with pytest.raises(InvalidIndexError, match=file_name) as exc_info:
+        index.save(index_path)
+
+    message = str(exc_info.value)
+    assert "symlink" in message
+    assert "Re-run `lecture-rag ingest`" in message

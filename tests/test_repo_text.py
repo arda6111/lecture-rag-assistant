@@ -58,13 +58,14 @@ def test_security_docs_warn_about_untrusted_faiss_files() -> None:
         assert phrase in text
 
 
-def test_streamlit_toolbar_is_minimal() -> None:
-    """The Streamlit config hides the Deploy button and the developer menu."""
+def test_streamlit_client_config() -> None:
+    """The Streamlit config hides the Deploy button, menu and error details."""
     import tomllib
 
     config = tomllib.loads((REPO_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
 
     assert config["client"]["toolbarMode"] == "minimal"
+    assert config["client"]["showErrorDetails"] == "none"
 
 
 def test_readme_states_corpus_license() -> None:

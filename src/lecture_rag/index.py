@@ -253,11 +253,28 @@ class VectorIndex:
 
         Raises:
             ValueError: If the model name is empty or whitespace
+            InvalidIndexError: If the index directory or an index file is a
+                symlink
         """
         if self.model_name is not None and not self.model_name.strip():
             raise ValueError("model_name must not be empty or whitespace")
 
+        abs_path = Path(os.path.abspath(path))
+        if abs_path.is_symlink():
+            raise InvalidIndexError(
+                f"Invalid index at {path}: the index directory is a symlink. "
+                "Use the real (non-symlink) path of the index directory instead."
+            )
+
         path.mkdir(parents=True, exist_ok=True)
+
+        for file_path in (
+            path / "index.faiss",
+            path / "documents.json",
+            path / "index_meta.json",
+        ):
+            if file_path.is_symlink():
+                raise _invalid_error(file_path, f"{file_path.name} is a symlink")
 
         faiss.write_index(self.index, str(path / "index.faiss"))
 

@@ -1,14 +1,113 @@
 """Build vector indexes from a directory of PDF documents."""
 
+import logging
+import os
+import shutil
+import stat
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .chunking import chunk_documents
 from .embeddings import EmbeddingModel
 from .index import VectorIndex
 from .pdf_loader import load_directory
 
+logger = logging.getLogger(__name__)
+
 CORPUS_DIR = Path(__file__).resolve().parents[2] / "data" / "corpus"
+CORPUS_INDEX_NAME = "corpus-index"
+
+
+def corpus_cache_dir() -> Path:
+    """Return a private directory for the corpus index cache.
+
+    The cache directory is ``$XDG_CACHE_HOME/lecture-rag`` when
+    ``XDG_CACHE_HOME`` is an absolute path, otherwise ``~/.cache/lecture-rag``.
+    The directory is created with mode 0700 and must remain a real directory
+    owned by the current user without group or world access. If it cannot be
+    created or fails those checks, a private temporary directory is used.
+
+    Returns:
+        A private directory that can hold the corpus index
+    """
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache_home and Path(xdg_cache_home).is_absolute():
+        base = Path(xdg_cache_home)
+    else:
+        base = Path.home() / ".cache"
+
+    cache_dir = base / "lecture-rag"
+
+    try:
+        cache_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = os.lstat(cache_dir)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise OSError(f"{cache_dir} is not a real directory")
+        getuid = getattr(os, "getuid", None)
+        if getuid is not None and info.st_uid != getuid():
+            raise OSError(f"{cache_dir} is owned by another user")
+        if info.st_mode & 0o077 != 0:
+            raise OSError(f"{cache_dir} is accessible by other users")
+    except OSError as e:
+        logger.warning("Cannot use %s as the corpus cache directory: %s", cache_dir, e)
+        return Path(tempfile.mkdtemp(prefix="lecture-rag-"))
+
+    return cache_dir
+
+
+def _remove_existing_index(path: Path) -> None:
+    """Remove an existing index path without following symlinks."""
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def build_index_atomically(
+    input_dir: Path,
+    cache_dir: Path,
+    embedding_model: EmbeddingModel,
+    model_name: str,
+    **kwargs: Any,
+) -> Path:
+    """Build an index in a temporary directory and move it into place.
+
+    Args:
+        input_dir: Directory containing the PDF files to index
+        cache_dir: Directory that holds the final corpus index
+        embedding_model: Loaded embedding model used to embed the chunks
+        model_name: Name recorded in the index metadata
+        **kwargs: Additional arguments passed to ``build_index``
+
+    Returns:
+        The path to the installed corpus index
+
+    Raises:
+        ValueError: If no PDF documents can be loaded from input_dir
+        OSError: If the temporary index cannot be moved into place
+    """
+    target = cache_dir / CORPUS_INDEX_NAME
+    temp_dir = Path(tempfile.mkdtemp(prefix=".corpus-index-", dir=cache_dir))
+
+    try:
+        build_index(input_dir, temp_dir, embedding_model, model_name, **kwargs)
+        _remove_existing_index(target)
+        try:
+            os.replace(temp_dir, target)
+        except OSError:
+            if target.exists() or target.is_symlink():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return target
+            raise
+    except BaseException:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    return target
 
 
 def build_index(

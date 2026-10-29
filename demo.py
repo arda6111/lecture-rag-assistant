@@ -1,7 +1,6 @@
 """Streamlit demo application for the Lecture RAG Assistant."""
 
 import os
-import tempfile
 from pathlib import Path
 from typing import cast
 
@@ -9,7 +8,7 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag import corpus_index, embeddings
-from lecture_rag.corpus_index import CORPUS_DIR
+from lecture_rag.corpus_index import CORPUS_DIR, CORPUS_INDEX_NAME
 from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import (
     ExtractiveFallbackProvider,
@@ -70,10 +69,15 @@ def demo_mode() -> str:
     return "local"
 
 
-def rerank_disabled() -> bool:
-    """Return True when reranking is disabled for this deployment."""
-    value = os.getenv("LECTURE_RAG_DEMO_DISABLE_RERANK", "")
+def rerank_enabled() -> bool:
+    """Return True when reranking is enabled for this deployment."""
+    value = os.getenv("LECTURE_RAG_DEMO_ENABLE_RERANK", "")
     return value.strip().lower() in ("1", "true", "yes")
+
+
+def is_query_too_long(query: str) -> bool:
+    """Return True when the query exceeds the maximum length."""
+    return len(query) > MAX_QUERY_CHARS
 
 
 @st.cache_resource
@@ -121,12 +125,13 @@ def _load_existing_corpus_index(
 @st.cache_resource(show_spinner=False)
 def build_corpus_retriever(model_name: str) -> Retriever:
     """Build or load the corpus retriever (cached)."""
-    index_dir = Path(tempfile.gettempdir()) / "lecture-rag-corpus-index"
+    cache_dir = corpus_index.corpus_cache_dir()
+    index_dir = cache_dir / CORPUS_INDEX_NAME
     model = embeddings.EmbeddingModel(model_name)
     index = _load_existing_corpus_index(index_dir, model_name, model.dimension)
 
     if index is None:
-        corpus_index.build_index(CORPUS_DIR, index_dir, model, model_name)
+        corpus_index.build_index_atomically(CORPUS_DIR, cache_dir, model, model_name)
         index = VectorIndex.load(index_dir)
 
     return Retriever(model, index, mode="dense")
@@ -225,7 +230,7 @@ def _render_query(
     if not query:
         return
 
-    if len(query) > MAX_QUERY_CHARS:
+    if is_query_too_long(query):
         st.warning(TOO_LONG_QUERY_MESSAGE)
         return
 
@@ -306,7 +311,7 @@ def _render_local() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    assert k <= MAX_SOURCES  # nosec B101
+    k = min(k, MAX_SOURCES)
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -399,7 +404,7 @@ def _render_corpus() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    assert k <= MAX_SOURCES  # nosec B101
+    k = min(k, MAX_SOURCES)
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -407,9 +412,14 @@ def _render_corpus() -> None:
     )
     if answer_mode == "llm":
         st.sidebar.text_input(
-            "OpenAI API key (optional, kept only in this browser session)",
+            "OpenAI API key (optional, kept only for this session, never stored)",
             type="password",
             key="openai_api_key",
+            help=(
+                "Held in this app session's memory on the server for this session only. "
+                "It is not written to disk, logs or caches and is sent only to "
+                "https://api.openai.com/v1."
+            ),
         )
     retrieval_mode = _retrieval_mode_select()
     abstain_threshold = st.sidebar.slider(
@@ -420,7 +430,7 @@ def _render_corpus() -> None:
         step=0.05,
     )
 
-    if rerank_disabled():
+    if not rerank_enabled():
         st.sidebar.caption(RERANK_DISABLED_MESSAGE)
         rerank = False
     else:

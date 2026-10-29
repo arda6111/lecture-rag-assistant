@@ -245,9 +245,9 @@ The sidebar controls the retrieval mode (dense, bm25, or hybrid), the abstain th
 
 ### Public demo on Streamlit Community Cloud
 
-The public demo runs in corpus mode on the committed PDFs in `data/corpus`. Corpus mode is selected automatically when `LECTURE_RAG_INDEX_DIR` is unset and `index/index.faiss` does not exist, which is the case on Streamlit Community Cloud. Set `LECTURE_RAG_DEMO_MODE=corpus` or `LECTURE_RAG_DEMO_MODE=local` to select a mode explicitly. The index is built on first start into a temporary directory under the system temp path, then reused by later sessions.
+The public demo runs in corpus mode on the committed PDFs in `data/corpus`. Corpus mode is selected automatically when `LECTURE_RAG_INDEX_DIR` is unset and `index/index.faiss` does not exist, which is the case on Streamlit Community Cloud. Set `LECTURE_RAG_DEMO_MODE=corpus` or `LECTURE_RAG_DEMO_MODE=local` to select a mode explicitly. The index is built on first start into a per-user cache directory (`$XDG_CACHE_HOME/lecture-rag` or `~/.cache/lecture-rag`, private 0700, falling back to a private temporary directory) and moved into place atomically, then reused by later sessions.
 
-The demo limits each question to 500 characters, retrieves at most 10 sources, and allows at most 30 searches per browser session (changing a sidebar setting reruns the search and counts as one). Reranking is off by default and can be disabled for a deployment with `LECTURE_RAG_DEMO_DISABLE_RERANK=1` (also accepts `true` or `yes`). An OpenAI API key is optional. When entered, it is held only in that session's Streamlit session state (not cached, logged or written to disk), and it is sent only to `https://api.openai.com/v1`; without a key the demo uses extractive answers.
+The demo limits each question to 500 characters, retrieves at most 10 sources, and allows at most 30 searches per session (changing a sidebar setting reruns the search and counts as one). Reranking is off in corpus mode unless `LECTURE_RAG_DEMO_ENABLE_RERANK=1` is set (also accepts `true` or `yes`). An OpenAI API key is optional. When entered, it is held only in this session's memory on the Streamlit server, never stored, and it is sent only to `https://api.openai.com/v1`; without a key the demo uses extractive answers.
 
 To regenerate the screenshot in this README:
 

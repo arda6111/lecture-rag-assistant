@@ -2,7 +2,6 @@
 
 import logging
 import os
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,7 +12,11 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import demo  # noqa: E402
 from lecture_rag import corpus_index  # noqa: E402
-from lecture_rag.corpus_index import CORPUS_DIR, build_index  # noqa: E402
+from lecture_rag.corpus_index import (  # noqa: E402
+    CORPUS_DIR,
+    build_index,
+    build_index_atomically,
+)
 from lecture_rag.generation import (  # noqa: E402
     OpenAICompatibleProvider,
     redact_secrets,
@@ -53,9 +56,11 @@ def _clear_streamlit_cache() -> None:
 def corpus_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Build the corpus index once with the hashing test model."""
     base = tmp_path_factory.mktemp("corpus-cache")
-    build_index(
+    cache_dir = base / "lecture-rag"
+    cache_dir.mkdir(mode=0o700)
+    build_index_atomically(
         CORPUS_DIR,
-        base / "lecture-rag-corpus-index",
+        cache_dir,
         HashingEmbeddingModel(),
         MODEL_NAME,
     )
@@ -80,15 +85,12 @@ def all_output_values(app: AppTest) -> list[str]:
 def run_corpus_app(
     monkeypatch: pytest.MonkeyPatch,
     cache_base: Path,
-    disable_rerank: bool = False,
 ) -> AppTest:
     """Run the demo in corpus mode against a temporary index cache."""
     monkeypatch.setenv("LECTURE_RAG_DEMO_MODE", "corpus")
     monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(cache_base))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache_base))
     monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", HashingEmbeddingModel)
-    if disable_rerank:
-        monkeypatch.setenv("LECTURE_RAG_DEMO_DISABLE_RERANK", "1")
     streamlit.cache_resource.clear()
     return AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
 
@@ -211,24 +213,29 @@ def test_query_input_is_capped_at_the_character_limit(
     assert len(app.text_input(key="query").value) == demo.MAX_QUERY_CHARS
 
 
-def test_disable_rerank_hides_checkbox_and_never_loads_model(
+class FakeReranker:
+    """Reranker that records construction."""
+
+    def __init__(self, model_name: str, instances: list[str]) -> None:
+        instances.append(model_name)
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        """Return deterministic scores for the document texts."""
+        return [float(index) for index in range(len(texts))]
+
+
+def test_default_corpus_mode_disables_rerank(
     monkeypatch: pytest.MonkeyPatch,
     corpus_cache: Path,
 ) -> None:
-    """The rerank flag hides the checkbox and never constructs a reranker."""
+    """Corpus mode hides the checkbox and never constructs a reranker by default."""
     instances: list[str] = []
 
-    class FakeReranker:
-        """Reranker that records construction."""
+    def fake_reranker(model_name: str) -> FakeReranker:
+        return FakeReranker(model_name, instances)
 
-        def __init__(self, model_name: str) -> None:
-            instances.append(model_name)
-
-        def score(self, query: str, texts: list[str]) -> list[float]:
-            return [float(index) for index in range(len(texts))]
-
-    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", FakeReranker)
-    app = run_corpus_app(monkeypatch, corpus_cache, disable_rerank=True)
+    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", fake_reranker)
+    app = run_corpus_app(monkeypatch, corpus_cache)
 
     assert not app.exception
     assert not any(element.key == "rerank" for element in app.checkbox)
@@ -243,19 +250,65 @@ def test_disable_rerank_hides_checkbox_and_never_loads_model(
     assert instances == []
 
 
+@pytest.mark.parametrize("value", ["0", ""])
+def test_corpus_rerank_stays_disabled_for_other_values(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+    value: str,
+) -> None:
+    """Only explicit truthy values enable reranking in corpus mode."""
+    monkeypatch.setenv("LECTURE_RAG_DEMO_ENABLE_RERANK", value)
+    app = run_corpus_app(monkeypatch, corpus_cache)
+
+    assert not app.exception
+    assert not any(element.key == "rerank" for element in app.checkbox)
+    assert any(
+        demo.RERANK_DISABLED_MESSAGE in caption for caption in element_values(app, ("caption",))
+    )
+
+
+def test_corpus_rerank_is_enabled_with_the_environment_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """The environment flag shows the checkbox and loads the reranker on demand."""
+    instances: list[str] = []
+
+    def fake_reranker(model_name: str) -> FakeReranker:
+        return FakeReranker(model_name, instances)
+
+    monkeypatch.setattr("lecture_rag.rerank.CrossEncoderReranker", fake_reranker)
+    monkeypatch.setenv("LECTURE_RAG_DEMO_ENABLE_RERANK", "1")
+    app = run_corpus_app(monkeypatch, corpus_cache)
+
+    assert not app.exception
+    rerank = app.checkbox(key="rerank")
+    assert rerank.value is False
+    assert not any(
+        demo.RERANK_DISABLED_MESSAGE in caption for caption in element_values(app, ("caption",))
+    )
+
+    rerank.set_value(True)
+    app.text_input(key="query").set_value(ON_TOPIC_QUERY)
+    app.run()
+
+    assert not app.exception
+    assert instances
+
+
 def test_corpus_index_is_reused_on_second_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """A second run loads the existing index instead of rebuilding it."""
     calls: list[tuple[object, ...]] = []
-    real_build = corpus_index.build_index
+    real_build = corpus_index.build_index_atomically
 
-    def counting_build(*args: object, **kwargs: object) -> int:
+    def counting_build(*args: object, **kwargs: object) -> Path:
         calls.append(args)
         return real_build(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(corpus_index, "build_index", counting_build)
+    monkeypatch.setattr(corpus_index, "build_index_atomically", counting_build)
 
     first = run_corpus_app(monkeypatch, tmp_path)
     assert not first.exception
@@ -422,6 +475,19 @@ def test_provider_redacts_key_in_logs_and_errors(
     assert "[redacted]" in message
     assert API_KEY not in caplog.text
     assert API_KEY not in repr(provider)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("x" * 500, False),
+        ("x" * 501, True),
+        ("", False),
+    ],
+)
+def test_is_query_too_long(query: str, expected: bool) -> None:
+    """The server-side length check matches the maximum query length."""
+    assert demo.is_query_too_long(query) is expected
 
 
 def test_build_index_on_sample_lectures(tmp_path: Path) -> None:
