@@ -9,7 +9,7 @@ from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import Generator
-from lecture_rag.index import IndexMetadataError, IndexModelMismatchError
+from lecture_rag.index import IndexModelMismatchError, InvalidIndexError
 from lecture_rag.retrieval import (
     RetrievalMode,
     Retriever,
@@ -17,17 +17,7 @@ from lecture_rag.retrieval import (
     parse_abstain_threshold,
 )
 
-MARKDOWN_SPECIAL_CHARS = frozenset("\\`*_{}[]()#+-.!|<>~")
-
 load_dotenv(find_dotenv(usecwd=True))
-
-
-def escape_markdown(text: str) -> str:
-    """Backslash-escape Markdown special characters in text."""
-    return "".join(
-        f"\\{character}" if character in MARKDOWN_SPECIAL_CHARS else character
-        for character in text
-    )
 
 st.set_page_config(
     page_title="Lecture RAG Assistant",
@@ -76,12 +66,11 @@ try:
     configured_mode = default_retrieval_mode()
 except ValueError as e:
     st.error(
-        escape_markdown(
-            f"Configuration error: {e}. "
-            "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid, "
-            "or pick a mode in the sidebar."
-        )
+        "Invalid LECTURE_RAG_RETRIEVAL_MODE configuration. "
+        "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid, "
+        "or pick a mode in the sidebar."
     )
+    st.code(str(e), language=None)
     configured_mode = "dense"
 retrieval_mode = cast(
     RetrievalMode,
@@ -105,28 +94,43 @@ allow_model_mismatch = st.sidebar.checkbox(
     key="allow_model_mismatch",
 )
 
-if not Path(index_dir).exists():
-    st.error(f"Index directory '{index_dir}' not found. Please run `lecture-rag ingest` first.")
+index_path = Path(index_dir)
+if not index_path.exists():
+    st.error("Index directory not found. Run `lecture-rag ingest` first.")
+    st.code(index_dir, language=None)
+    st.stop()
+
+if not index_path.is_dir():
+    st.error("Index path is not a directory.")
+    st.code(index_dir, language=None)
     st.stop()
 
 try:
     retriever = load_retriever(index_dir, model_name, allow_model_mismatch)
     st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
 except IndexModelMismatchError as e:
-    st.error(escape_markdown(f"Model and index do not match: {e}"))
+    st.error("Model and index do not match.")
+    st.code(str(e), language=None)
     st.stop()
-except IndexMetadataError as e:
-    st.error(escape_markdown(str(e)))
+except InvalidIndexError as e:
+    st.error("Invalid index.")
+    st.code(str(e), language=None)
     st.stop()
 except EmbeddingModelError as e:
-    st.error(escape_markdown(str(e)))
+    st.error("Failed to load the embedding model.")
+    st.code(str(e), language=None)
     st.stop()
 except Exception as e:
-    st.error(escape_markdown(f"Failed to load index: {e}"))
+    st.error("Failed to load index.")
+    st.code(str(e), language=None)
     st.stop()
 
 if retriever.model_warning is not None:
-    st.warning(escape_markdown(retriever.model_warning))
+    st.warning(
+        "The embedding model differs from the model the index was built with. "
+        "Results may be unreliable."
+    )
+    st.code(retriever.model_warning, language=None)
 
 query = st.text_input(
     "Ask a question:",
@@ -151,18 +155,20 @@ if query:
                     generator = Generator.from_config(mode=mode)
                     answer = generator.generate_answer(query, sources)
             except ValueError as e:
-                st.error(escape_markdown(str(e)))
+                st.error("Could not generate an answer.")
+                st.code(str(e), language=None)
                 st.stop()
 
             st.subheader("Answer")
-            st.markdown(answer.answer_text)
+            st.text(answer.answer_text)
 
             st.subheader("Sources")
             for i, result in enumerate(answer.sources, 1):
                 doc = result.document
                 with st.expander(
-                    f"[{i}] {doc.file_name}, page {doc.page_number} ({result.score_label})"
+                    f"Source {i}, page {doc.page_number} ({result.score_label})"
                 ):
+                    st.text(f"File: {doc.file_name}")
                     st.text(doc.text)
 
     st.caption(f"Best dense similarity: {outcome.max_dense_similarity:.3f}")
