@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import hashlib
+import importlib.util
 import os
 import re
 from pathlib import Path
@@ -10,7 +11,10 @@ import fitz
 import numpy as np
 import pytest
 
-from lecture_rag.models import Document
+if importlib.util.find_spec("streamlit") is not None:
+    import demo  # noqa: F401
+
+from lecture_rag.models import Document  # noqa: E402
 
 TOKEN_PATTERN = re.compile(r"\w+")
 

@@ -9,6 +9,54 @@ from typing import cast
 
 APP_DIR = Path(__file__).resolve().parent
 SRC_DIR = APP_DIR / "src"
+SOURCE_STAMP_ATTR = "_demo_source_stamp"
+
+
+def source_stamp(src_dir: Path) -> tuple[tuple[str, int, int], ...]:
+    """Return a fingerprint of the lecture_rag source files.
+
+    Args:
+        src_dir: The checkout's src directory that contains the lecture_rag package.
+
+    Returns:
+        A sorted tuple of relative path, modification time in nanoseconds, and size.
+    """
+    package_dir = src_dir / "lecture_rag"
+    entries: list[tuple[str, int, int]] = []
+    for path in package_dir.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        stat = path.stat()
+        entries.append((path.relative_to(src_dir).as_posix(), stat.st_mtime_ns, stat.st_size))
+    return tuple(sorted(entries))
+
+
+def drop_stale_modules(src_dir: Path) -> bool:
+    """Drop cached lecture_rag modules whose source files changed on disk.
+
+    Streamlit Community Cloud updates the checkout in place and reruns the
+    script in the same process, so modules imported by the previous version
+    would otherwise stay in sys.modules.
+
+    Args:
+        src_dir: The checkout's src directory that contains the lecture_rag package.
+
+    Returns:
+        True when stale modules were removed, otherwise False.
+    """
+    if "lecture_rag" not in sys.modules or not (src_dir / "lecture_rag").is_dir():
+        return False
+
+    module = sys.modules["lecture_rag"]
+    if getattr(module, SOURCE_STAMP_ATTR, None) == source_stamp(src_dir):
+        return False
+
+    for name in list(sys.modules):
+        if name == "lecture_rag" or name.startswith("lecture_rag."):
+            del sys.modules[name]
+
+    importlib.invalidate_caches()
+    return True
 
 
 def use_repo_sources(src_dir: Path) -> bool:
@@ -44,10 +92,13 @@ def use_repo_sources(src_dir: Path) -> bool:
 
 # Streamlit Cloud can install a stale non-editable copy, so use the checkout's sources.
 use_repo_sources(SRC_DIR)
+# It also reruns the updated script in the same process, so drop modules from the old version.
+_stale_modules_dropped = drop_stale_modules(SRC_DIR)
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
+import lecture_rag
 from lecture_rag import corpus_index, embeddings
 from lecture_rag.corpus_index import resolve_corpus_dir
 from lecture_rag.embeddings import EmbeddingModelError
@@ -73,6 +124,17 @@ from lecture_rag.retrieval import (
     default_retrieval_mode,
     parse_abstain_threshold,
 )
+
+lecture_rag_file = getattr(lecture_rag, "__file__", None)
+if (
+    (SRC_DIR / "lecture_rag").is_dir()
+    and lecture_rag_file is not None
+    and Path(lecture_rag_file).resolve().is_relative_to(SRC_DIR.resolve())
+):
+    setattr(lecture_rag, SOURCE_STAMP_ATTR, source_stamp(SRC_DIR))
+if _stale_modules_dropped:
+    # Cached objects were built from the old classes, so they must not be reused.
+    st.cache_resource.clear()
 
 logger = logging.getLogger(__name__)
 
