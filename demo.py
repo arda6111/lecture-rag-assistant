@@ -1,9 +1,49 @@
 """Streamlit demo application for the Lecture RAG Assistant."""
 
+import importlib
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import cast
+
+APP_DIR = Path(__file__).resolve().parent
+SRC_DIR = APP_DIR / "src"
+
+
+def use_repo_sources(src_dir: Path) -> bool:
+    """Make imports resolve to the checkout's sources instead of installed copies.
+
+    Args:
+        src_dir: The checkout's src directory that contains the lecture_rag package.
+
+    Returns:
+        True when src_dir contains lecture_rag and was added to sys.path, otherwise False.
+    """
+    if not (src_dir / "lecture_rag").is_dir():
+        return False
+
+    resolved_src = src_dir.resolve()
+    sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() != resolved_src]
+    sys.path.insert(0, str(src_dir))
+
+    module = sys.modules.get("lecture_rag")
+    if module is not None:
+        module_file = getattr(module, "__file__", None)
+        inside_src = module_file is not None and Path(module_file).resolve().is_relative_to(
+            resolved_src
+        )
+        if not inside_src:
+            for name in list(sys.modules):
+                if name == "lecture_rag" or name.startswith("lecture_rag."):
+                    del sys.modules[name]
+
+    importlib.invalidate_caches()
+    return True
+
+
+# Streamlit Cloud can install a stale non-editable copy, so use the checkout's sources.
+use_repo_sources(SRC_DIR)
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
@@ -39,8 +79,6 @@ logger = logging.getLogger(__name__)
 MAX_QUERY_CHARS = 500
 MAX_SOURCES = 10
 MAX_QUESTIONS_PER_SESSION = 30
-
-APP_DIR = Path(__file__).resolve().parent
 
 CORPUS_MODEL_NAME = "all-MiniLM-L6-v2"
 DEMO_LLM_BASE_URL = "https://api.openai.com/v1"

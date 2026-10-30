@@ -40,6 +40,17 @@ def test_no_em_dashes_in_docs(path: Path) -> None:
     assert "\u2014" not in path.read_text(encoding="utf-8")
 
 
+def test_requirements_file_for_streamlit_cloud() -> None:
+    """The Cloud requirements file pins CPU torch and installs the demo extra."""
+    lines = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+
+    assert lines == [
+        "--extra-index-url https://download.pytorch.org/whl/cpu",
+        "torch==2.15.0",
+        "-e .[demo]",
+    ]
+
+
 def test_security_reporting_policy() -> None:
     """SECURITY.md points to private reporting and contains no email address."""
     text = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")

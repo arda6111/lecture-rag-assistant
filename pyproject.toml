@@ -56,6 +56,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"demo.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"
