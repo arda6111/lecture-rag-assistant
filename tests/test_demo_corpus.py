@@ -92,10 +92,14 @@ def run_corpus_app(
     monkeypatch: pytest.MonkeyPatch,
     cache_base: Path,
     embedding_model: type = HashingEmbeddingModel,
+    abstain_threshold: str | None = "0",
 ) -> AppTest:
     """Run the demo in corpus mode against a temporary index cache."""
     monkeypatch.setenv("LECTURE_RAG_DEMO_MODE", "corpus")
-    monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
+    if abstain_threshold is None:
+        monkeypatch.delenv("LECTURE_RAG_ABSTAIN_THRESHOLD", raising=False)
+    else:
+        monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", abstain_threshold)
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_base))
     monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", embedding_model)
     streamlit.cache_resource.clear()
@@ -179,13 +183,29 @@ def install_fake_openai(
     monkeypatch.setattr("lecture_rag.generation.OpenAI", fake_openai)
 
 
-def ask_with_llm(app: AppTest, key: str) -> None:
-    """Select llm mode, enter a key, and ask an on-topic question."""
+def ask_with_llm(app: AppTest, key: str, provider: str | None = None) -> None:
+    """Select llm mode, optionally pick a provider, enter a key, and ask a question."""
     app.selectbox(key="answer_mode").set_value("llm")
     app.run()
+    if provider is not None:
+        app.selectbox(key="llm_provider").set_value(provider)
+        app.run()
     app.text_input(key="openai_api_key").set_value(key)
     app.text_input(key="query").set_value(ON_TOPIC_QUERY)
     app.run()
+
+
+def dialog_markdown_values(app: AppTest) -> list[str]:
+    """Return the markdown values rendered inside open dialogs.
+
+    AppTest keeps dialog content outside ``app.main``. The dialog itself is
+    available through ``app.get("dialog")``, and its child elements are exposed
+    as the usual typed collections on each dialog block.
+    """
+    values: list[str] = []
+    for dialog in app.get("dialog"):
+        values.extend(str(element.value) for element in dialog.markdown)
+    return values
 
 
 def test_corpus_mode_renders_sources_as_text(
@@ -199,7 +219,7 @@ def test_corpus_mode_renders_sources_as_text(
     assert not any(element.key == "index_dir" for element in app.text_input)
     assert not any(element.key == "model_name" for element in app.text_input)
     assert not any(element.key == "allow_model_mismatch" for element in app.checkbox)
-    assert any("data/corpus" in caption for caption in element_values(app, ("caption",)))
+    assert any(demo.CORPUS_CAPTION in caption for caption in element_values(app, ("caption",)))
 
     app.text_input(key="query").set_value(ON_TOPIC_QUERY)
     app.run()
@@ -209,6 +229,144 @@ def test_corpus_mode_renders_sources_as_text(
     assert any("Sources" in str(element.value) for element in app.subheader)
     assert any("clustering-intro" in value for value in element_values(app, ("text",)))
     assert not any("clustering-intro" in value for value in element_values(app, ("markdown",)))
+
+
+def slider_value(app: AppTest, label: str) -> float:
+    """Return the value of the slider with the given label."""
+    return next(float(element.value) for element in app.slider if element.label == label)
+
+
+def run_local_app(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> AppTest:
+    """Run the demo in local mode against a temporary index."""
+    index_dir = tmp_path / "index"
+    build_index(SAMPLE_DIR, index_dir, HashingEmbeddingModel(), MODEL_NAME)
+    monkeypatch.setenv("LECTURE_RAG_DEMO_MODE", "local")
+    monkeypatch.setenv("LECTURE_RAG_INDEX_DIR", str(index_dir))
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", HashingEmbeddingModel)
+    streamlit.cache_resource.clear()
+    return AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
+
+
+def test_corpus_mode_uses_hybrid_and_the_corpus_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """Corpus mode defaults to hybrid retrieval and an abstain threshold of 0.45."""
+    app = run_corpus_app(monkeypatch, corpus_cache, abstain_threshold=None)
+
+    assert not app.exception
+    assert app.selectbox(key="retrieval_mode").value == "hybrid"
+    assert slider_value(app, "Abstain threshold") == 0.45
+
+
+def test_corpus_mode_environment_overrides_win(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """Environment settings override the corpus-mode defaults."""
+    monkeypatch.setenv("LECTURE_RAG_RETRIEVAL_MODE", "bm25")
+    app = run_corpus_app(monkeypatch, corpus_cache, abstain_threshold="0.25")
+
+    assert not app.exception
+    assert app.selectbox(key="retrieval_mode").value == "bm25"
+    assert slider_value(app, "Abstain threshold") == 0.25
+
+
+def test_local_mode_keeps_dense_and_the_local_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Local mode keeps dense retrieval, a 0.35 threshold, and no examples."""
+    app = run_local_app(monkeypatch, tmp_path)
+
+    assert not app.exception
+    assert app.selectbox(key="retrieval_mode").value == "dense"
+    assert slider_value(app, "Abstain threshold") == 0.35
+    assert not any(element.key and element.key.startswith("example_") for element in app.button)
+
+
+def test_corpus_caption_describes_the_corpus() -> None:
+    """The corpus caption names the topics and the source list."""
+    assert demo.CORPUS_CAPTION == (
+        "Corpus: six CC BY 4.0 arXiv tutorials on transformers, autoencoders, reinforcement "
+        "learning, testing neural networks, MLOps and clustering (see data/SOURCES.md). "
+        "Questions outside these topics should get no answer."
+    )
+
+
+def test_corpus_example_buttons_set_the_query_and_search(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """Each example button has the exact label and runs a search when clicked."""
+    app = run_corpus_app(monkeypatch, corpus_cache)
+
+    assert not app.exception
+    assert any("Try an example:" in caption for caption in element_values(app, ("caption",)))
+    for index, question in enumerate(demo.EXAMPLE_QUESTIONS):
+        assert app.button(key=f"example_{index}").label == question
+
+    app.button(key="example_0").click().run()
+
+    assert not app.exception
+    assert app.text_input(key="query").value == demo.EXAMPLE_QUESTIONS[0]
+    assert app.session_state["questions_asked"] == 1
+    assert any("Sources" in str(element.value) for element in app.subheader)
+
+
+def test_corpus_shows_the_welcome_dialog_once(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """The welcome dialog appears on the first corpus visit and stays dismissed."""
+    app = run_corpus_app(monkeypatch, corpus_cache)
+
+    assert not app.exception
+    assert app.get("dialog")
+    assert any(demo.WELCOME_MESSAGE in value for value in dialog_markdown_values(app))
+    assert any(button.label == "Got it" for button in app.button)
+
+    app.button(key="welcome_got_it").click().run()
+
+    assert not app.exception
+    assert app.session_state["welcome_seen"] is True
+    assert not app.get("dialog")
+    assert all(demo.WELCOME_MESSAGE not in value for value in element_values(app, ("markdown",)))
+
+    app.run()
+
+    assert not app.get("dialog")
+    assert all(demo.WELCOME_MESSAGE not in value for value in element_values(app, ("markdown",)))
+
+    app.text_input(key="query").set_value(ON_TOPIC_QUERY)
+    app.run()
+
+    assert not app.exception
+    assert not app.get("dialog")
+    assert all(demo.WELCOME_MESSAGE not in value for value in element_values(app, ("markdown",)))
+    assert any("Sources" in str(element.value) for element in app.subheader)
+
+
+def test_local_mode_never_shows_the_welcome_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The one-time welcome dialog is only rendered in corpus mode."""
+    app = run_local_app(monkeypatch, tmp_path)
+
+    assert not app.exception
+    assert not app.get("dialog")
+    assert all(demo.WELCOME_MESSAGE not in value for value in element_values(app, ("markdown",)))
+
+    app.text_input(key="query").set_value(ON_TOPIC_QUERY)
+    app.run()
+
+    assert not app.exception
+    assert not app.get("dialog")
+    assert all(demo.WELCOME_MESSAGE not in value for value in element_values(app, ("markdown",)))
 
 
 def test_session_cap_stops_searching(
@@ -443,11 +601,13 @@ def test_corpus_invalid_index_error_hides_details(
     assert detail in caplog.text
 
 
+@pytest.mark.parametrize("provider_name", list(demo.LLM_PROVIDERS))
 def test_corpus_llm_error_never_exposes_key(
     monkeypatch: pytest.MonkeyPatch,
     corpus_cache: Path,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
+    provider_name: str,
 ) -> None:
     """A failing LLM request never renders or logs the API key."""
     install_fake_openai(
@@ -474,7 +634,7 @@ def test_corpus_llm_error_never_exposes_key(
 
     with caplog.at_level(logging.ERROR):
         app = run_corpus_app(monkeypatch, corpus_cache)
-        ask_with_llm(app, API_KEY)
+        ask_with_llm(app, API_KEY, provider=provider_name)
 
     assert not app.exception
     assert any(demo.LLM_ERROR_MESSAGE in error for error in element_values(app, ("error",)))
@@ -496,11 +656,45 @@ def test_corpus_llm_error_never_exposes_key(
     assert API_KEY not in os.environ.values()
 
 
-def test_corpus_llm_success_uses_fixed_endpoint_and_timeout(
+def test_llm_providers_are_the_fixed_read_only_allowlist() -> None:
+    """Only the three fixed providers are available and the mapping is read-only."""
+    assert list(demo.LLM_PROVIDERS) == ["OpenAI", "Groq", "OpenRouter"]
+    assert demo.DEFAULT_LLM_PROVIDER == "OpenAI"
+    assert {provider.base_url for provider in demo.LLM_PROVIDERS.values()} == {
+        "https://api.openai.com/v1",
+        "https://api.groq.com/openai/v1",
+        "https://openrouter.ai/api/v1",
+    }
+    assert all(provider.base_url.startswith("https://") for provider in demo.LLM_PROVIDERS.values())
+
+    with pytest.raises(TypeError):
+        demo.LLM_PROVIDERS["OpenAI"] = demo.LLM_PROVIDERS["Groq"]  # type: ignore[index]
+
+
+def test_corpus_llm_mode_has_no_url_or_model_text_input(
     monkeypatch: pytest.MonkeyPatch,
     corpus_cache: Path,
 ) -> None:
-    """A successful LLM answer is rendered as text and uses the fixed endpoint."""
+    """Corpus llm mode never offers a free-form URL or model input."""
+    app = run_corpus_app(monkeypatch, corpus_cache)
+    app.selectbox(key="answer_mode").set_value("llm")
+    app.run()
+
+    assert not app.exception
+    assert {element.key for element in app.text_input} == {"query", "openai_api_key"}
+    assert not any(
+        "url" in element.label.lower() or "model" in element.label.lower()
+        for element in app.text_input
+    )
+
+
+@pytest.mark.parametrize("provider_name", list(demo.LLM_PROVIDERS))
+def test_corpus_llm_success_uses_the_selected_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+    provider_name: str,
+) -> None:
+    """Each provider gets its fixed endpoint, model, timeout, and key label."""
     calls: list[dict[str, object]] = []
     install_fake_openai(
         monkeypatch,
@@ -508,20 +702,64 @@ def test_corpus_llm_success_uses_fixed_endpoint_and_timeout(
         calls=calls,
     )
     app = run_corpus_app(monkeypatch, corpus_cache)
-    ask_with_llm(app, API_KEY)
+    ask_with_llm(app, API_KEY, provider=provider_name)
+    provider = demo.LLM_PROVIDERS[provider_name]
 
     assert not app.exception
     assert not app.error
     assert any("DBSCAN identifies core points" in value for value in element_values(app, ("text",)))
+    assert app.selectbox(key="llm_provider").value == provider_name
+    assert app.text_input(key="openai_api_key").label.startswith(provider.key_label)
     assert calls
     assert calls[0]["api_key"] == API_KEY
-    assert calls[0]["base_url"] == demo.DEMO_LLM_BASE_URL
+    assert calls[0]["base_url"] == provider.base_url
     assert calls[0]["timeout"] == 30.0
     create_calls = [call["create"] for call in calls if "create" in call]
     assert create_calls
     assert all(isinstance(call, dict) for call in create_calls)
+    assert {call["model"] for call in create_calls if isinstance(call, dict)} == {provider.model}
+
+
+def test_corpus_unknown_provider_falls_back_to_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown provider in session state falls back to the default provider."""
+    calls: list[dict[str, object]] = []
+    install_fake_openai(
+        monkeypatch,
+        answer="DBSCAN identifies core points with a neighbourhood count.",
+        calls=calls,
+    )
+    code = f"""
+import streamlit as st
+
+import demo
+from lecture_rag.models import Document, RetrievalResult
+
+source = RetrievalResult(
+    document=Document(
+        text="DBSCAN uses core points.",
+        file_name="clustering.pdf",
+        page_number=1,
+        chunk_id="clustering.pdf_page_1",
+    ),
+    score=1.0,
+)
+st.session_state["llm_provider"] = "Unknown"
+st.session_state["openai_api_key"] = {API_KEY!r}
+answer = demo._generate_corpus_answer("How does DBSCAN work?", [source], "llm")
+st.write(answer.answer_text)
+"""
+    app = AppTest.from_string(code).run()
+
+    assert not app.exception
+    assert not app.error
+    assert calls
+    assert calls[0]["base_url"] == demo.LLM_PROVIDERS[demo.DEFAULT_LLM_PROVIDER].base_url
+    assert calls[0]["timeout"] == 30.0
+    create_calls = [call["create"] for call in calls if "create" in call]
     assert {call["model"] for call in create_calls if isinstance(call, dict)} == {
-        demo.DEMO_LLM_MODEL
+        demo.LLM_PROVIDERS[demo.DEFAULT_LLM_PROVIDER].model
     }
 
 

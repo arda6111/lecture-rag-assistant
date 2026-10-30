@@ -4,7 +4,10 @@ import importlib
 import logging
 import os
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import cast
 
 APP_DIR = Path(__file__).resolve().parent
@@ -143,17 +146,78 @@ MAX_SOURCES = 10
 MAX_QUESTIONS_PER_SESSION = 30
 
 CORPUS_MODEL_NAME = "all-MiniLM-L6-v2"
-DEMO_LLM_BASE_URL = "https://api.openai.com/v1"
-DEMO_LLM_MODEL = "gpt-4o-mini"
+CORPUS_DEFAULT_RETRIEVAL_MODE: RetrievalMode = "hybrid"
+CORPUS_DEFAULT_ABSTAIN_THRESHOLD = 0.45
 
-CORPUS_CAPTION = "Corpus: data/corpus, six CC BY 4.0 arXiv tutorials, see data/SOURCES.md."
+
+@dataclass(frozen=True)
+class LLMProvider:
+    """A fixed LLM provider available in the public corpus demo.
+
+    Attributes:
+        name: Display name of the provider.
+        base_url: Fixed OpenAI-compatible endpoint.
+        model: Model name sent to the provider.
+        key_label: Label for the API key input field.
+    """
+
+    name: str
+    base_url: str
+    model: str
+    key_label: str
+
+
+LLM_PROVIDERS: Mapping[str, LLMProvider] = MappingProxyType(
+    {
+        "OpenAI": LLMProvider(
+            name="OpenAI",
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o-mini",
+            key_label="OpenAI API key",
+        ),
+        "Groq": LLMProvider(
+            name="Groq",
+            base_url="https://api.groq.com/openai/v1",
+            model="openai/gpt-oss-120b",
+            key_label="Groq API key",
+        ),
+        "OpenRouter": LLMProvider(
+            name="OpenRouter",
+            base_url="https://openrouter.ai/api/v1",
+            model="google/gemma-4-31b-it:free",
+            key_label="OpenRouter API key",
+        ),
+    }
+)
+DEFAULT_LLM_PROVIDER = "OpenAI"
+
+WELCOME_MESSAGE = (
+    "Generated answers need your own API key. Switch Answer Mode to llm in the sidebar, "
+    "pick OpenAI, Groq or OpenRouter, and paste your key there. Groq and OpenRouter offer "
+    "free tiers. The key is kept only for this session and is never stored. Without a key, "
+    "the demo shows the most relevant passages with their sources (extractive mode)."
+)
+
+CORPUS_CAPTION = (
+    "Corpus: six CC BY 4.0 arXiv tutorials on transformers, autoencoders, reinforcement "
+    "learning, testing neural networks, MLOps and clustering (see data/SOURCES.md). "
+    "Questions outside these topics should get no answer."
+)
+EXAMPLE_QUESTIONS = (
+    "How does DBSCAN identify core points and outliers?",
+    "What does the bottleneck layer of an autoencoder learn?",
+    "How does self-attention work in a transformer?",
+    "How is neuron coverage used to test neural networks?",
+)
 TOO_LONG_QUERY_MESSAGE = "The question is too long. Please keep it to 500 characters or fewer."
 SESSION_LIMIT_MESSAGE = (
     "This session has reached its limit of 30 searches. Reload the page to start a new session."
 )
 RERANK_DISABLED_MESSAGE = "Reranking is disabled on this deployment."
 LLM_FALLBACK_MESSAGE = "No API key was entered, so the answer uses extractive mode."
-LLM_ERROR_MESSAGE = "The language model request failed. Check the key or switch to extractive mode."
+LLM_ERROR_MESSAGE = (
+    "The language model request failed. Check the key and provider or switch to extractive mode."
+)
 CORPUS_INVALID_INDEX_MESSAGE = "The search index could not be loaded. Please try again later."
 CORPUS_BUILD_ERROR_MESSAGE = "Failed to build the corpus index. Please try again later."
 
@@ -267,19 +331,30 @@ def build_corpus_retriever(
     return Retriever(model, index, mode="dense")
 
 
-def _retrieval_mode_select() -> RetrievalMode:
-    """Render the retrieval mode selector and return the selected mode."""
+def _retrieval_mode_select(default_mode: RetrievalMode = "dense") -> RetrievalMode:
+    """Render the retrieval mode selector and return the selected mode.
+
+    Args:
+        default_mode: Mode used when LECTURE_RAG_RETRIEVAL_MODE is unset or empty
+
+    Returns:
+        The retrieval mode selected in the sidebar
+    """
     retrieval_modes = ["dense", "bm25", "hybrid"]
-    try:
-        configured_mode = default_retrieval_mode()
-    except ValueError as e:
-        st.error(
-            "Invalid LECTURE_RAG_RETRIEVAL_MODE configuration. "
-            "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid, "
-            "or pick a mode in the sidebar."
-        )
-        st.code(str(e), language=None)
-        configured_mode = "dense"
+    raw_mode = os.getenv("LECTURE_RAG_RETRIEVAL_MODE")
+    if raw_mode is None or not raw_mode.strip():
+        configured_mode: RetrievalMode = default_mode
+    else:
+        try:
+            configured_mode = default_retrieval_mode()
+        except ValueError as e:
+            st.error(
+                "Invalid LECTURE_RAG_RETRIEVAL_MODE configuration. "
+                "Set LECTURE_RAG_RETRIEVAL_MODE to dense, bm25 or hybrid, "
+                "or pick a mode in the sidebar."
+            )
+            st.code(str(e), language=None)
+            configured_mode = "dense"
 
     return cast(
         RetrievalMode,
@@ -290,6 +365,37 @@ def _retrieval_mode_select() -> RetrievalMode:
             key="retrieval_mode",
         ),
     )
+
+
+def _corpus_abstain_threshold() -> float:
+    """Return the corpus-mode abstain threshold.
+
+    Returns:
+        The parsed environment value when it is set and non-empty, otherwise
+        the corpus-mode default
+    """
+    raw = os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")
+    if raw is None or not raw.strip():
+        return CORPUS_DEFAULT_ABSTAIN_THRESHOLD
+    return parse_abstain_threshold(raw)
+
+
+def _set_example_query(question: str) -> None:
+    """Set the query input to an example question.
+
+    Args:
+        question: Example question selected by the button
+    """
+    st.session_state["query"] = question
+
+
+@st.dialog("About answers in this demo")
+def _welcome_dialog() -> None:
+    """Show the one-time welcome dialog for the public corpus demo."""
+    st.write(WELCOME_MESSAGE)
+    if st.button("Got it", key="welcome_got_it"):
+        st.session_state["welcome_seen"] = True
+        st.rerun()
 
 
 def _generate_local_answer(
@@ -319,13 +425,18 @@ def _generate_corpus_answer(
             if answer_mode == "llm":
                 key = st.session_state.get("openai_api_key", "")
                 if key:
-                    provider = OpenAICompatibleProvider(
-                        api_key=key,
-                        base_url=DEMO_LLM_BASE_URL,
-                        model=DEMO_LLM_MODEL,
-                        timeout=30.0,
+                    provider = LLM_PROVIDERS.get(
+                        st.session_state.get("llm_provider", DEFAULT_LLM_PROVIDER),
+                        LLM_PROVIDERS[DEFAULT_LLM_PROVIDER],
                     )
-                    generator = Generator(provider)
+                    generator = Generator(
+                        OpenAICompatibleProvider(
+                            api_key=key,
+                            base_url=provider.base_url,
+                            model=provider.model,
+                            timeout=30.0,
+                        )
+                    )
                 else:
                     st.info(LLM_FALLBACK_MESSAGE)
                     generator = Generator(ExtractiveFallbackProvider())
@@ -350,6 +461,17 @@ def _render_query(
     """Render the query input, run the search, and show the answer."""
     # The retriever comes from st.cache_resource and is shared by all sessions,
     # so per-session state such as a reranker must not be stored on it.
+    if corpus_mode:
+        st.caption("Try an example:")
+        example_columns = st.columns(2)
+        for index, question in enumerate(EXAMPLE_QUESTIONS):
+            example_columns[index % len(example_columns)].button(
+                question,
+                key=f"example_{index}",
+                on_click=_set_example_query,
+                args=(question,),
+            )
+
     query = st.text_input(
         "Ask a question:",
         placeholder="What is dynamic programming?",
@@ -526,6 +648,12 @@ def _render_local() -> None:
 
 def _render_corpus() -> None:
     """Render the public corpus demo mode."""
+    if not st.session_state.get("welcome_seen"):
+        # Mark it as seen when it is shown, so closing it with the X or Escape
+        # also keeps it from coming back in this session.
+        st.session_state["welcome_seen"] = True
+        _welcome_dialog()
+
     st.caption(CORPUS_CAPTION)
 
     k = st.sidebar.slider(
@@ -541,22 +669,27 @@ def _render_corpus() -> None:
         key="answer_mode",
     )
     if answer_mode == "llm":
+        provider_name = st.sidebar.selectbox(
+            "LLM provider",
+            options=list(LLM_PROVIDERS),
+            key="llm_provider",
+        )
+        provider = LLM_PROVIDERS[provider_name]
         st.sidebar.text_input(
-            "OpenAI API key (optional, kept only for this session, never stored)",
+            f"{provider.key_label} (optional, kept only for this session, never stored)",
             type="password",
             key="openai_api_key",
             help=(
-                "Held in this app session's memory on the server for this session only. "
-                "It is not written to disk, logs or caches and is sent only to "
-                "https://api.openai.com/v1."
+                "Held only in this session's memory on the server, never written to disk, "
+                f"logs or caches, and sent only to {provider.base_url}."
             ),
         )
-    retrieval_mode = _retrieval_mode_select()
+    retrieval_mode = _retrieval_mode_select(CORPUS_DEFAULT_RETRIEVAL_MODE)
     abstain_threshold = st.sidebar.slider(
         "Abstain threshold",
         min_value=0.0,
         max_value=1.0,
-        value=parse_abstain_threshold(os.getenv("LECTURE_RAG_ABSTAIN_THRESHOLD")),
+        value=_corpus_abstain_threshold(),
         step=0.05,
     )
 
