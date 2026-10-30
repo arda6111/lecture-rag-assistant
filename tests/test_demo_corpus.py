@@ -2,12 +2,25 @@
 
 import logging
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - newer openai packages use httpx2
+    import httpx2 as httpx
+
 streamlit = pytest.importorskip("streamlit")
+from openai import (  # noqa: E402
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    RateLimitError,
+)
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import demo  # noqa: E402
@@ -88,11 +101,67 @@ def all_output_values(app: AppTest) -> list[str]:
     return values
 
 
+def groq_request() -> httpx.Request:
+    """Return a Groq request object without sending it."""
+    return httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+
+
+def status_error(
+    error_type: type[APIStatusError],
+    status_code: int,
+    message: str = "request failed",
+) -> APIStatusError:
+    """Build an OpenAI status error backed by a real HTTP response."""
+    request = groq_request()
+    return error_type(
+        message,
+        response=httpx.Response(status_code, request=request),
+        body=None,
+    )
+
+
+def sample_source() -> RetrievalResult:
+    """Return a single retrieval result for provider tests."""
+    return RetrievalResult(
+        document=Document(
+            text="DBSCAN uses core points.",
+            file_name="clustering.pdf",
+            page_number=1,
+            chunk_id="clustering.pdf_page_1",
+        ),
+        score=1.0,
+    )
+
+
+class FakeSentenceTransformer:
+    """Offline stand-in for sentence-transformers used after a module reload."""
+
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self._model = HashingEmbeddingModel(model_name)
+
+    def get_sentence_embedding_dimension(self) -> int:
+        """Return the deterministic embedding dimension."""
+        return self._model.dimension
+
+    def encode(
+        self,
+        texts: str | list[str],
+        convert_to_numpy: bool = True,
+        show_progress_bar: bool = True,
+    ) -> object:
+        """Return deterministic embeddings for one text or a list of texts."""
+        if isinstance(texts, str):
+            return self._model.embed_query(texts)
+        return self._model.embed_texts(texts, show_progress=show_progress_bar)
+
+
 def run_corpus_app(
     monkeypatch: pytest.MonkeyPatch,
     cache_base: Path,
     embedding_model: type = HashingEmbeddingModel,
     abstain_threshold: str | None = "0",
+    clear_cache: bool = True,
 ) -> AppTest:
     """Run the demo in corpus mode against a temporary index cache."""
     monkeypatch.setenv("LECTURE_RAG_DEMO_MODE", "corpus")
@@ -102,7 +171,8 @@ def run_corpus_app(
         monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", abstain_threshold)
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_base))
     monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", embedding_model)
-    streamlit.cache_resource.clear()
+    if clear_cache:
+        streamlit.cache_resource.clear()
     return AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
 
 
@@ -144,10 +214,12 @@ class FakeCompletions:
         answer: str | None = None,
         error: Exception | None = None,
         calls: list[dict[str, object]] | None = None,
+        response: object | None = None,
     ) -> None:
         self.answer = answer
         self.error = error
         self.calls = calls
+        self.response = response
 
     def create(self, **kwargs: object) -> object:
         """Return a fake response or raise the configured error."""
@@ -155,6 +227,8 @@ class FakeCompletions:
             self.calls.append({"create": kwargs})
         if self.error is not None:
             raise self.error
+        if self.response is not None:
+            return self.response
         message = SimpleNamespace(content=self.answer)
         choice = SimpleNamespace(message=message)
         return SimpleNamespace(choices=[choice])
@@ -172,13 +246,16 @@ def install_fake_openai(
     answer: str | None = None,
     error: Exception | None = None,
     calls: list[dict[str, object]] | None = None,
+    response: object | None = None,
 ) -> None:
     """Install a fake OpenAI constructor and optionally record its arguments."""
 
     def fake_openai(**kwargs: object) -> FakeClient:
         if calls is not None:
             calls.append(kwargs)
-        return FakeClient(FakeCompletions(answer=answer, error=error, calls=calls))
+        return FakeClient(
+            FakeCompletions(answer=answer, error=error, calls=calls, response=response)
+        )
 
     monkeypatch.setattr("lecture_rag.generation.OpenAI", fake_openai)
 
@@ -514,6 +591,55 @@ def test_corpus_index_is_reused_on_second_run(
     assert len(calls) == 1
 
 
+def test_corpus_answers_after_lecture_rag_is_reimported(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """Cached resources from old classes are replaced after a watcher reimport."""
+    original_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "lecture_rag" or name.startswith("lecture_rag.")
+    }
+    for name, module in original_modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    try:
+        first = run_corpus_app(monkeypatch, corpus_cache)
+        first.session_state["welcome_seen"] = True
+        first.text_input(key="query").set_value(ON_TOPIC_QUERY)
+        first.run()
+
+        assert not first.exception
+        assert not first.error
+        assert any("Sources" in str(element.value) for element in first.subheader)
+
+        for name in list(sys.modules):
+            if name == "lecture_rag" or name.startswith("lecture_rag."):
+                del sys.modules[name]
+
+        import sentence_transformers
+
+        monkeypatch.setattr(
+            sentence_transformers,
+            "SentenceTransformer",
+            FakeSentenceTransformer,
+        )
+
+        second = AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
+        second.session_state["welcome_seen"] = True
+        second.text_input(key="query").set_value(ON_TOPIC_QUERY)
+        second.run()
+
+        assert not second.exception
+        assert not second.error
+        assert any("Sources" in str(element.value) for element in second.subheader)
+    finally:
+        for name in list(sys.modules):
+            if name == "lecture_rag" or name.startswith("lecture_rag."):
+                del sys.modules[name]
+
+
 def test_corpus_build_failure_hides_filesystem_details(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -609,11 +735,13 @@ def test_corpus_llm_error_never_exposes_key(
     capsys: pytest.CaptureFixture[str],
     provider_name: str,
 ) -> None:
-    """A failing LLM request never renders or logs the API key."""
-    install_fake_openai(
-        monkeypatch,
-        error=RuntimeError(f"request failed for {API_KEY}"),
+    """A failing LLM request shows safe details and never renders or logs the key."""
+    error = status_error(
+        RateLimitError,
+        429,
+        f"quota exhausted for {API_KEY} at https://api.groq.com/openai/v1",
     )
+    install_fake_openai(monkeypatch, error=error)
 
     class ExplodingSecrets:
         """Secrets object that fails if the app reads it."""
@@ -632,17 +760,24 @@ def test_corpus_llm_error_never_exposes_key(
 
     monkeypatch.setattr(streamlit, "secrets", ExplodingSecrets())
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         app = run_corpus_app(monkeypatch, corpus_cache)
         ask_with_llm(app, API_KEY, provider=provider_name)
 
+    provider = demo.LLM_PROVIDERS[provider_name]
     assert not app.exception
-    assert any(demo.LLM_ERROR_MESSAGE in error for error in element_values(app, ("error",)))
-    assert any("ValueError" in code for code in element_values(app, ("code",)))
+    assert any(
+        f"The {provider.name} request failed. Check the key, try another provider, "
+        "or switch to extractive mode." in error
+        for error in element_values(app, ("error",))
+    )
+    assert any("RateLimitError (HTTP 429)" in code for code in element_values(app, ("code",)))
+    assert any("rate limit" in code.lower() for code in element_values(app, ("code",)))
 
     values = all_output_values(app)
     assert all(API_KEY not in value for value in values)
     assert all(API_KEY[-8:] not in value for value in values)
+    assert all("api.groq.com" not in value for value in values)
 
     assert API_KEY not in caplog.text
     assert API_KEY[-8:] not in caplog.text
@@ -718,6 +853,181 @@ def test_corpus_llm_success_uses_the_selected_provider(
     assert create_calls
     assert all(isinstance(call, dict) for call in create_calls)
     assert {call["model"] for call in create_calls if isinstance(call, dict)} == {provider.model}
+    assert all(call["max_tokens"] == 1024 for call in create_calls if isinstance(call, dict))
+
+
+def test_describe_llm_error_reports_only_safe_details() -> None:
+    """Error descriptions use only types, status codes, and safe hints."""
+    rate_limit = status_error(RateLimitError, 429, f"quota for {API_KEY} at {groq_request().url}")
+    authentication = status_error(AuthenticationError, 401, f"bad key {API_KEY}")
+    server = status_error(APIStatusError, 500, f"server failed at {groq_request().url}")
+    timeout = APITimeoutError(request=groq_request())
+    connection = APIConnectionError(request=groq_request())
+
+    try:
+        try:
+            raise rate_limit
+        except RateLimitError as e:
+            raise ValueError(f"wrapped {API_KEY}") from e
+    except ValueError as e:
+        wrapped = e
+
+    expected_rate_limit = (
+        "RateLimitError (HTTP 429) - rate limit or free-tier quota reached, "
+        "try again later or use another provider"
+    )
+    assert demo.describe_llm_error(rate_limit) == expected_rate_limit
+    assert demo.describe_llm_error(wrapped) == expected_rate_limit
+    assert (
+        demo.describe_llm_error(authentication)
+        == "AuthenticationError (HTTP 401) - the key was rejected"
+    )
+    assert demo.describe_llm_error(server) == "APIStatusError (HTTP 500)"
+    assert demo.describe_llm_error(timeout) == "APITimeoutError (no response within 30 s)"
+    assert demo.describe_llm_error(connection) == "APIConnectionError"
+    assert demo.describe_llm_error(ValueError(f"bad {API_KEY}")) == "ValueError"
+
+    descriptions = [
+        demo.describe_llm_error(error)
+        for error in (rate_limit, wrapped, authentication, server, timeout, connection)
+    ]
+    assert all("api.groq.com" not in description for description in descriptions)
+    assert all(API_KEY not in description for description in descriptions)
+    assert all(API_KEY[-8:] not in description for description in descriptions)
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            SimpleNamespace(
+                id="chatcmpl-groq",
+                model="openai/gpt-oss-120b",
+                choices=[
+                    SimpleNamespace(
+                        index=0,
+                        message=SimpleNamespace(
+                            role="assistant",
+                            content="Groq gpt-oss answer.",
+                            reasoning="hidden reasoning",
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=11,
+                    completion_tokens=7,
+                    total_tokens=18,
+                    queue_time=0.1,
+                    prompt_time=0.2,
+                    completion_time=0.3,
+                ),
+            ),
+            "Groq gpt-oss answer.",
+        ),
+        (
+            SimpleNamespace(
+                id="gen-openrouter",
+                model="nvidia/nemotron-3-ultra-550b-a55b:free",
+                provider="OpenRouter",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            role="assistant",
+                            content="OpenRouter answer.",
+                            reasoning=None,
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                    total_tokens=15,
+                ),
+            ),
+            "OpenRouter answer.",
+        ),
+        (
+            SimpleNamespace(
+                id="chatcmpl-openai",
+                model="gpt-4o-mini",
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            role="assistant",
+                            content="OpenAI answer.",
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=SimpleNamespace(
+                    prompt_tokens=8,
+                    completion_tokens=4,
+                    total_tokens=12,
+                ),
+            ),
+            "OpenAI answer.",
+        ),
+    ],
+    ids=["groq-gpt-oss", "openrouter", "openai"],
+)
+def test_provider_reads_recorded_response_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+    response: SimpleNamespace,
+    expected: str,
+) -> None:
+    """Recorded provider responses all yield their content as the answer text."""
+    calls: list[dict[str, object]] = []
+    install_fake_openai(monkeypatch, response=response, calls=calls)
+    provider = OpenAICompatibleProvider(api_key=API_KEY, base_url="https://example.test/v1")
+
+    answer = provider.generate("How does DBSCAN work?", [sample_source()])
+
+    assert answer == expected
+    create_calls = [call["create"] for call in calls if "create" in call]
+    assert create_calls
+    assert create_calls[0]["max_tokens"] == 1024
+    assert create_calls[0]["temperature"] == 0.3
+
+
+@pytest.mark.parametrize("content", [None, "", "   \n\t"])
+def test_provider_rejects_missing_text_content(
+    monkeypatch: pytest.MonkeyPatch,
+    content: str | None,
+) -> None:
+    """A response without text raises instead of returning a placeholder."""
+    calls: list[dict[str, object]] = []
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+    install_fake_openai(monkeypatch, response=response, calls=calls)
+    provider = OpenAICompatibleProvider(api_key=API_KEY, base_url="https://example.test/v1")
+
+    with pytest.raises(ValueError, match="The model returned no text."):
+        provider.generate("How does DBSCAN work?", [sample_source()])
+
+    create_calls = [call["create"] for call in calls if "create" in call]
+    assert create_calls
+    assert create_calls[0]["max_tokens"] == 1024
+
+
+def test_corpus_demo_shows_provider_failure_for_missing_text(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+) -> None:
+    """A provider response without text shows the provider failure message."""
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None))])
+    install_fake_openai(monkeypatch, response=response)
+    app = run_corpus_app(monkeypatch, corpus_cache)
+    ask_with_llm(app, API_KEY, provider="Groq")
+
+    assert not app.exception
+    assert any(
+        "The Groq request failed. Check the key, try another provider, "
+        "or switch to extractive mode." in error
+        for error in element_values(app, ("error",))
+    )
+    assert any("ValueError" in code for code in element_values(app, ("code",)))
+    assert all(API_KEY not in value for value in all_output_values(app))
 
 
 def test_corpus_unknown_provider_falls_back_to_openai(
@@ -781,6 +1091,7 @@ def test_corpus_llm_without_key_falls_back_to_extractive(
     assert not app.exception
     assert any(demo.LLM_FALLBACK_MESSAGE in info for info in element_values(app, ("info",)))
     assert any("[Extractive mode" in value for value in element_values(app, ("text",)))
+    assert not any("request failed" in error for error in element_values(app, ("error",)))
 
 
 def test_redact_secrets_replaces_known_secrets() -> None:

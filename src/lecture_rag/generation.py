@@ -139,9 +139,12 @@ class OpenAICompatibleProvider(GenerationProvider):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
+                max_tokens=1024,
             )
 
-            answer = response.choices[0].message.content or "No answer generated."
+            answer = response.choices[0].message.content
+            if answer is None or not answer.strip():
+                raise ValueError("The model returned no text.")
             return answer
 
         except Exception as e:

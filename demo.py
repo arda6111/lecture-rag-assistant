@@ -100,6 +100,7 @@ _stale_modules_dropped = drop_stale_modules(SRC_DIR)
 
 import streamlit as st
 from dotenv import find_dotenv, load_dotenv
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 import lecture_rag
 from lecture_rag import corpus_index, embeddings
@@ -128,6 +129,8 @@ from lecture_rag.retrieval import (
     parse_abstain_threshold,
 )
 
+_classes_token = id(sys.modules["lecture_rag.models"])
+
 lecture_rag_file = getattr(lecture_rag, "__file__", None)
 if (
     (SRC_DIR / "lecture_rag").is_dir()
@@ -135,9 +138,22 @@ if (
     and Path(lecture_rag_file).resolve().is_relative_to(SRC_DIR.resolve())
 ):
     setattr(lecture_rag, SOURCE_STAMP_ATTR, source_stamp(SRC_DIR))
-if _stale_modules_dropped:
-    # Cached objects were built from the old classes, so they must not be reused.
+
+
+@st.cache_resource
+def _loaded_classes() -> dict[str, int | None]:
+    """Return the identity of the lecture_rag classes used by cached resources."""
+    return {"token": None}  # nosec B105
+
+
+# Streamlit's file watcher can re-import lecture_rag without drop_stale_modules
+# seeing it, because the package may already be gone from sys.modules. Tie the
+# cached resources to the loaded class module so old objects are never reused.
+holder = _loaded_classes()
+if (holder["token"] is not None and holder["token"] != _classes_token) or _stale_modules_dropped:
     st.cache_resource.clear()
+    holder = _loaded_classes()
+holder["token"] = _classes_token
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +200,7 @@ LLM_PROVIDERS: Mapping[str, LLMProvider] = MappingProxyType(
         "OpenRouter": LLMProvider(
             name="OpenRouter",
             base_url="https://openrouter.ai/api/v1",
-            model="google/gemma-4-31b-it:free",
+            model="nvidia/nemotron-3-ultra-550b-a55b:free",
             key_label="OpenRouter API key",
         ),
     }
@@ -215,9 +231,6 @@ SESSION_LIMIT_MESSAGE = (
 )
 RERANK_DISABLED_MESSAGE = "Reranking is disabled on this deployment."
 LLM_FALLBACK_MESSAGE = "No API key was entered, so the answer uses extractive mode."
-LLM_ERROR_MESSAGE = (
-    "The language model request failed. Check the key and provider or switch to extractive mode."
-)
 CORPUS_INVALID_INDEX_MESSAGE = "The search index could not be loaded. Please try again later."
 CORPUS_BUILD_ERROR_MESSAGE = "Failed to build the corpus index. Please try again later."
 
@@ -268,8 +281,20 @@ def load_retriever(
     index_path: str,
     model_name: str,
     allow_model_mismatch: bool,
+    classes_token: int,
 ) -> Retriever:
-    """Load the retriever (cached)."""
+    """Load the retriever (cached).
+
+    Args:
+        index_path: Path to the saved index directory.
+        model_name: Name of the embedding model.
+        allow_model_mismatch: Whether to allow a model and index mismatch.
+        classes_token: Identity of the loaded lecture_rag.models module. It is
+            only part of the cache key and is not used to load the retriever.
+
+    Returns:
+        The cached retriever.
+    """
     return Retriever.from_index_path(
         Path(index_path),
         model_name,
@@ -279,8 +304,17 @@ def load_retriever(
 
 
 @st.cache_resource
-def load_reranker(model_name: str) -> CrossEncoderReranker:
-    """Load the cross-encoder reranker (cached)."""
+def load_reranker(model_name: str, classes_token: int) -> CrossEncoderReranker:
+    """Load the cross-encoder reranker (cached).
+
+    Args:
+        model_name: Name of the cross-encoder model.
+        classes_token: Identity of the loaded lecture_rag.models module. It is
+            only part of the cache key and is not used to load the reranker.
+
+    Returns:
+        The cached cross-encoder reranker.
+    """
     return CrossEncoderReranker(model_name)
 
 
@@ -310,8 +344,20 @@ def build_corpus_retriever(
     model_name: str,
     corpus_dir: str,
     fingerprint: str,
+    classes_token: int,
 ) -> Retriever:
-    """Build or load the corpus retriever (cached)."""
+    """Build or load the corpus retriever (cached).
+
+    Args:
+        model_name: Name of the embedding model.
+        corpus_dir: Path to the corpus directory.
+        fingerprint: Fingerprint that identifies the corpus contents.
+        classes_token: Identity of the loaded lecture_rag.models module. It is
+            only part of the cache key and is not used to build the retriever.
+
+    Returns:
+        The cached corpus retriever.
+    """
     cache_dir = corpus_index.corpus_cache_dir()
     index_name = corpus_index.corpus_index_name(fingerprint)
     index_dir = cache_dir / index_name
@@ -414,38 +460,86 @@ def _generate_local_answer(
         st.stop()
 
 
+def describe_llm_error(exc: BaseException) -> str:
+    """Return a short, safe description of an LLM request failure.
+
+    Args:
+        exc: Exception raised while generating an answer.
+
+    Returns:
+        A description naming the failure type and, for HTTP failures, the
+        status code. It never includes the exception message, a URL, a path, or
+        an API key.
+    """
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__
+
+    for error in chain:
+        if isinstance(error, APIStatusError):
+            detail = f"{type(error).__name__} (HTTP {error.status_code})"
+            if error.status_code == 401:
+                return f"{detail} - the key was rejected"
+            if error.status_code == 429:
+                return (
+                    f"{detail} - rate limit or free-tier quota reached, "
+                    "try again later or use another provider"
+                )
+            return detail
+        if isinstance(error, APITimeoutError):
+            return "APITimeoutError (no response within 30 s)"
+        if isinstance(error, APIConnectionError):
+            return "APIConnectionError"
+
+    return type(chain[-1]).__name__
+
+
 def _generate_corpus_answer(
     query: str,
     sources: list[RetrievalResult],
     answer_mode: str,
 ) -> Answer:
     """Generate an answer for the public corpus demo."""
+    key = st.session_state.get("openai_api_key", "")
+    if answer_mode != "llm" or not key:
+        if answer_mode == "llm":
+            st.info(LLM_FALLBACK_MESSAGE)
+        try:
+            with st.spinner("Generating answer..."):
+                generator = Generator(ExtractiveFallbackProvider())
+                return generator.generate_answer(query, sources)
+        except Exception:
+            logger.exception("Extractive answer generation failed")
+            raise
+
+    provider = LLM_PROVIDERS.get(
+        st.session_state.get("llm_provider", DEFAULT_LLM_PROVIDER),
+        LLM_PROVIDERS[DEFAULT_LLM_PROVIDER],
+    )
     try:
         with st.spinner("Generating answer..."):
-            if answer_mode == "llm":
-                key = st.session_state.get("openai_api_key", "")
-                if key:
-                    provider = LLM_PROVIDERS.get(
-                        st.session_state.get("llm_provider", DEFAULT_LLM_PROVIDER),
-                        LLM_PROVIDERS[DEFAULT_LLM_PROVIDER],
-                    )
-                    generator = Generator(
-                        OpenAICompatibleProvider(
-                            api_key=key,
-                            base_url=provider.base_url,
-                            model=provider.model,
-                            timeout=30.0,
-                        )
-                    )
-                else:
-                    st.info(LLM_FALLBACK_MESSAGE)
-                    generator = Generator(ExtractiveFallbackProvider())
-            else:
-                generator = Generator(ExtractiveFallbackProvider())
+            generator = Generator(
+                OpenAICompatibleProvider(
+                    api_key=key,
+                    base_url=provider.base_url,
+                    model=provider.model,
+                    timeout=30.0,
+                )
+            )
             return generator.generate_answer(query, sources)
-    except Exception as e:
-        st.error(LLM_ERROR_MESSAGE)
-        st.code(type(e).__name__, language=None)
+    except Exception as exc:
+        logger.warning(
+            "The %s request failed with %s",
+            provider.name,
+            type(exc).__name__,
+        )
+        st.error(
+            f"The {provider.name} request failed. Check the key, try another provider, "
+            "or switch to extractive mode."
+        )
+        st.code(describe_llm_error(exc), language=None)
         st.stop()
 
 
@@ -503,7 +597,7 @@ def _render_query(
     else:
         if rerank:
             try:
-                reranker = load_reranker(default_rerank_model())
+                reranker = load_reranker(default_rerank_model(), _classes_token)
             except Exception as e:
                 # CrossEncoderReranker wraps load failures in RerankerError, but
                 # anything else raised while loading gets the same friendly message.
@@ -609,7 +703,12 @@ def _render_local() -> None:
         st.stop()
 
     try:
-        retriever = load_retriever(index_dir, model_name, allow_model_mismatch)
+        retriever = load_retriever(
+            index_dir,
+            model_name,
+            allow_model_mismatch,
+            _classes_token,
+        )
         st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
     except IndexModelMismatchError as e:
         st.error("Model and index do not match.")
@@ -713,6 +812,7 @@ def _render_corpus() -> None:
                 CORPUS_MODEL_NAME,
                 str(corpus_dir),
                 fingerprint,
+                _classes_token,
             )
             st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
         except EmbeddingModelError:
