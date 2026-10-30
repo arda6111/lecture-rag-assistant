@@ -11,6 +11,7 @@ from lecture_rag.corpus_index import (
     CORPUS_INDEX_NAME,
     build_index_atomically,
     corpus_cache_dir,
+    resolve_corpus_dir,
 )
 from lecture_rag.index import VectorIndex
 from tests.conftest import HashingEmbeddingModel
@@ -18,6 +19,64 @@ from tests.conftest import HashingEmbeddingModel
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_DIR = REPO_ROOT / "data" / "sample_lectures"
 MODEL_NAME = "all-MiniLM-L6-v2"
+
+
+def test_resolve_corpus_dir_prefers_app_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The corpus next to the application directory is preferred over the cwd."""
+    app_dir = tmp_path / "app"
+    app_corpus = app_dir / "data" / "corpus"
+    app_corpus.mkdir(parents=True)
+    cwd_dir = tmp_path / "cwd"
+    (cwd_dir / "data" / "corpus").mkdir(parents=True)
+    monkeypatch.chdir(cwd_dir)
+
+    assert resolve_corpus_dir(app_dir) == app_corpus
+
+
+def test_resolve_corpus_dir_falls_back_to_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The cwd corpus is used when the application directory has none."""
+    cwd_dir = tmp_path / "cwd"
+    cwd_corpus = cwd_dir / "data" / "corpus"
+    cwd_corpus.mkdir(parents=True)
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    monkeypatch.chdir(cwd_dir)
+
+    assert resolve_corpus_dir(app_dir) == cwd_corpus
+
+
+def test_resolve_corpus_dir_returns_app_candidate_when_none_exists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The expected app location is returned when no corpus directory exists."""
+    app_dir = tmp_path / "app"
+    cwd_dir = tmp_path / "cwd"
+    cwd_dir.mkdir()
+    monkeypatch.chdir(cwd_dir)
+
+    assert resolve_corpus_dir(app_dir) == app_dir / "data" / "corpus"
+
+
+def test_resolve_corpus_dir_ignores_installed_package_location(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A non-editable install still resolves the corpus from the app directory."""
+    fake_file = tmp_path / "venv/lib/python3.12/site-packages/lecture_rag/corpus_index.py"
+    fake_file.parent.mkdir(parents=True)
+    fake_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(corpus_index, "__file__", str(fake_file))
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_corpus_dir(REPO_ROOT) == REPO_ROOT / "data" / "corpus"
+    assert not hasattr(corpus_index, "CORPUS_DIR")
 
 
 def test_corpus_cache_dir_creates_private_directory(

@@ -16,8 +16,33 @@ from .pdf_loader import load_directory
 
 logger = logging.getLogger(__name__)
 
-CORPUS_DIR = Path(__file__).resolve().parents[2] / "data" / "corpus"
+CORPUS_RELATIVE_PATH = Path("data") / "corpus"
 CORPUS_INDEX_NAME = "corpus-index"
+
+
+def resolve_corpus_dir(app_dir: Path | None = None) -> Path:
+    """Resolve the bundled corpus directory without relying on the package path.
+
+    The application directory is preferred when it contains the corpus. If it
+    does not, the current working directory is checked. When neither candidate
+    exists, the first candidate is returned so that callers report the expected
+    location.
+
+    Args:
+        app_dir: Directory containing the demo application, if known
+
+    Returns:
+        The first existing candidate directory, or the first candidate
+    """
+    candidates: list[Path] = []
+    if app_dir is not None:
+        candidates.append(app_dir / CORPUS_RELATIVE_PATH)
+    candidates.append(Path.cwd() / CORPUS_RELATIVE_PATH)
+
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
 
 
 def corpus_cache_dir() -> Path:

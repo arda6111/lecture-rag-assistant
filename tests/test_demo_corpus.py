@@ -13,9 +13,9 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 import demo  # noqa: E402
 from lecture_rag import corpus_index  # noqa: E402
 from lecture_rag.corpus_index import (  # noqa: E402
-    CORPUS_DIR,
     build_index,
     build_index_atomically,
+    resolve_corpus_dir,
 )
 from lecture_rag.generation import (  # noqa: E402
     OpenAICompatibleProvider,
@@ -26,6 +26,7 @@ from lecture_rag.models import Document, RetrievalResult  # noqa: E402
 from tests.conftest import HashingEmbeddingModel  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+CORPUS_DIR = REPO_ROOT / "data" / "corpus"
 SAMPLE_DIR = REPO_ROOT / "data" / "sample_lectures"
 MODEL_NAME = "all-MiniLM-L6-v2"
 # Built from parts so secret scanners do not flag this fake test value.
@@ -93,6 +94,36 @@ def run_corpus_app(
     monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", HashingEmbeddingModel)
     streamlit.cache_resource.clear()
     return AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
+
+
+def test_demo_app_dir_contains_the_corpus() -> None:
+    """The app directory resolves to the repository corpus."""
+    assert (demo.APP_DIR / "data" / "corpus").is_dir()
+    assert resolve_corpus_dir(demo.APP_DIR) == demo.APP_DIR / "data" / "corpus"
+
+
+def test_corpus_mode_loads_from_a_different_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    corpus_cache: Path,
+    tmp_path: Path,
+) -> None:
+    """Corpus mode loads the index even when the cwd has no corpus directory."""
+    monkeypatch.chdir(tmp_path)
+
+    app = run_corpus_app(monkeypatch, corpus_cache)
+
+    assert not app.exception
+    assert not app.error
+    assert any("Loaded index with" in success for success in element_values(app, ("success",)))
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(-5, 1), (0, 1), (5, 5), (demo.MAX_SOURCES + 1, demo.MAX_SOURCES)],
+)
+def test_source_count_is_clamped(value: int, expected: int) -> None:
+    """Out-of-range source counts are clamped to the slider bounds."""
+    assert max(1, min(value, demo.MAX_SOURCES)) == expected
 
 
 class FakeCompletions:
@@ -317,6 +348,40 @@ def test_corpus_index_is_reused_on_second_run(
     second = run_corpus_app(monkeypatch, tmp_path)
     assert not second.exception
     assert len(calls) == 1
+
+
+def test_corpus_build_failure_hides_filesystem_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Build failures show a fixed message and log the details server-side."""
+    secret_path = "/secret/path/data/corpus"
+    detail = f"Directory not found: {secret_path}"
+
+    def failing_build(*args: object, **kwargs: object) -> Path:
+        raise OSError(detail)
+
+    monkeypatch.setattr(corpus_index, "build_index_atomically", failing_build)
+
+    with caplog.at_level(logging.ERROR):
+        app = run_corpus_app(monkeypatch, tmp_path)
+
+    assert not app.exception
+    assert any(
+        demo.CORPUS_BUILD_ERROR_MESSAGE in error for error in element_values(app, ("error",))
+    )
+
+    values = all_output_values(app)
+    assert all(secret_path not in value for value in values)
+    assert all("Directory not found" not in value for value in values)
+
+    codes = element_values(app, ("code",))
+    assert all(secret_path not in code for code in codes)
+    assert all("Directory not found" not in code for code in codes)
+
+    assert secret_path in caplog.text
+    assert "Directory not found" in caplog.text
 
 
 def test_corpus_llm_error_never_exposes_key(

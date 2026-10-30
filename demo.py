@@ -1,5 +1,6 @@
 """Streamlit demo application for the Lecture RAG Assistant."""
 
+import logging
 import os
 from pathlib import Path
 from typing import cast
@@ -8,7 +9,7 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag import corpus_index, embeddings
-from lecture_rag.corpus_index import CORPUS_DIR, CORPUS_INDEX_NAME
+from lecture_rag.corpus_index import CORPUS_INDEX_NAME, resolve_corpus_dir
 from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import (
     ExtractiveFallbackProvider,
@@ -33,9 +34,13 @@ from lecture_rag.retrieval import (
     parse_abstain_threshold,
 )
 
+logger = logging.getLogger(__name__)
+
 MAX_QUERY_CHARS = 500
 MAX_SOURCES = 10
 MAX_QUESTIONS_PER_SESSION = 30
+
+APP_DIR = Path(__file__).resolve().parent
 
 CORPUS_MODEL_NAME = "all-MiniLM-L6-v2"
 DEMO_LLM_BASE_URL = "https://api.openai.com/v1"
@@ -49,6 +54,8 @@ SESSION_LIMIT_MESSAGE = (
 RERANK_DISABLED_MESSAGE = "Reranking is disabled on this deployment."
 LLM_FALLBACK_MESSAGE = "No API key was entered, so the answer uses extractive mode."
 LLM_ERROR_MESSAGE = "The language model request failed. Check the key or switch to extractive mode."
+CORPUS_INVALID_INDEX_MESSAGE = "The search index could not be loaded. Please try again later."
+CORPUS_BUILD_ERROR_MESSAGE = "Failed to build the corpus index. Please try again later."
 
 
 def demo_mode() -> str:
@@ -123,7 +130,7 @@ def _load_existing_corpus_index(
 # The retriever from st.cache_resource is shared by all sessions, so the
 # embedding model and index are loaded only once per deployment.
 @st.cache_resource(show_spinner=False)
-def build_corpus_retriever(model_name: str) -> Retriever:
+def build_corpus_retriever(model_name: str, corpus_dir: str) -> Retriever:
     """Build or load the corpus retriever (cached)."""
     cache_dir = corpus_index.corpus_cache_dir()
     index_dir = cache_dir / CORPUS_INDEX_NAME
@@ -131,7 +138,7 @@ def build_corpus_retriever(model_name: str) -> Retriever:
     index = _load_existing_corpus_index(index_dir, model_name, model.dimension)
 
     if index is None:
-        corpus_index.build_index_atomically(CORPUS_DIR, cache_dir, model, model_name)
+        corpus_index.build_index_atomically(Path(corpus_dir), cache_dir, model, model_name)
         index = VectorIndex.load(index_dir)
 
     return Retriever(model, index, mode="dense")
@@ -311,7 +318,7 @@ def _render_local() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    k = min(k, MAX_SOURCES)
+    k = max(1, min(k, MAX_SOURCES))
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -404,7 +411,7 @@ def _render_corpus() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    k = min(k, MAX_SOURCES)
+    k = max(1, min(k, MAX_SOURCES))
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -444,19 +451,22 @@ def _render_corpus() -> None:
         "Building the search index from data/corpus on first start. This takes about a minute."
     ):
         try:
-            retriever = build_corpus_retriever(CORPUS_MODEL_NAME)
+            retriever = build_corpus_retriever(
+                CORPUS_MODEL_NAME,
+                str(resolve_corpus_dir(APP_DIR)),
+            )
             st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
         except EmbeddingModelError as e:
             st.error("Failed to load the embedding model.")
             st.code(str(e), language=None)
             st.stop()
-        except InvalidIndexError as e:
-            st.error("Invalid index.")
-            st.code(str(e), language=None)
+        except InvalidIndexError:
+            logger.exception("Corpus index load failed")
+            st.error(CORPUS_INVALID_INDEX_MESSAGE)
             st.stop()
-        except Exception as e:
-            st.error("Failed to build the corpus index.")
-            st.code(str(e), language=None)
+        except Exception:
+            logger.exception("Corpus index build failed")
+            st.error(CORPUS_BUILD_ERROR_MESSAGE)
             st.stop()
 
     _render_query(
