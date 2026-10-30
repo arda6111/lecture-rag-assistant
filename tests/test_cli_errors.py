@@ -67,15 +67,24 @@ def test_ingest_rejects_invalid_chunking(
     assert not (tmp_path / "idx").exists()
 
 
-def test_ingest_empty_directory_fails(runner: CliRunner, tmp_path: Path) -> None:
-    """Ingest exits non-zero when there is nothing to index."""
+def test_ingest_empty_directory_fails(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ingest exits non-zero before loading the model when there is no PDF."""
     empty = tmp_path / "empty"
     empty.mkdir()
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        raise AssertionError("embedding model must not be loaded")
+
+    monkeypatch.setattr("lecture_rag.cli.EmbeddingModel", fail_if_called)
 
     result = runner.invoke(main, ["ingest", str(empty), "--index-dir", str(tmp_path / "idx")])
 
     assert_clean_failure(result)
-    assert "No PDF documents could be loaded" in result.output
+    assert f"No PDF files found in {empty}" in result.output
 
 
 @pytest.mark.parametrize("model", ["", "   "])

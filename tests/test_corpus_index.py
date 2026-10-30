@@ -1,7 +1,9 @@
-"""Tests for the corpus index cache directory and atomic builds."""
+"""Tests for the corpus index cache directory and safe installs."""
 
 import os
+import shutil
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,8 +11,10 @@ import pytest
 from lecture_rag import corpus_index
 from lecture_rag.corpus_index import (
     CORPUS_INDEX_NAME,
-    build_index_atomically,
+    build_and_install_index,
     corpus_cache_dir,
+    corpus_fingerprint,
+    corpus_index_name,
     resolve_corpus_dir,
 )
 from lecture_rag.index import VectorIndex
@@ -19,6 +23,25 @@ from tests.conftest import HashingEmbeddingModel
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAMPLE_DIR = REPO_ROOT / "data" / "sample_lectures"
 MODEL_NAME = "all-MiniLM-L6-v2"
+
+
+def use_fallback_tempdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> Path:
+    """Point the process fallback cache at a test-owned temporary directory."""
+    tempdir = tmp_path / "tmp"
+    tempdir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tempdir))
+    monkeypatch.setattr(corpus_index, "_fallback_dir", None)
+    return tempdir
+
+
+def assert_private_fallback(cache_dir: Path, tempdir: Path) -> None:
+    """Assert that a cache path is the expected private fallback directory."""
+    assert cache_dir.is_relative_to(tempdir)
+    assert cache_dir.is_dir()
+    assert stat.S_IMODE(cache_dir.stat().st_mode) == 0o700
 
 
 def test_resolve_corpus_dir_prefers_app_dir(
@@ -98,6 +121,7 @@ def test_corpus_cache_dir_falls_back_for_shared_directory(
     tmp_path: Path,
 ) -> None:
     """A group or world accessible cache directory is not used."""
+    tempdir = use_fallback_tempdir(monkeypatch, tmp_path)
     shared_dir = tmp_path / "lecture-rag"
     shared_dir.mkdir()
     shared_dir.chmod(0o777)
@@ -107,7 +131,8 @@ def test_corpus_cache_dir_falls_back_for_shared_directory(
 
     assert cache_dir != shared_dir
     assert shared_dir not in cache_dir.parents
-    assert cache_dir.is_dir()
+    assert_private_fallback(cache_dir, tempdir)
+    assert corpus_cache_dir() == cache_dir
 
 
 def test_corpus_cache_dir_falls_back_for_symlinked_directory(
@@ -115,6 +140,7 @@ def test_corpus_cache_dir_falls_back_for_symlinked_directory(
     tmp_path: Path,
 ) -> None:
     """A symlinked cache directory is not used."""
+    tempdir = use_fallback_tempdir(monkeypatch, tmp_path)
     real_dir = tmp_path / "real-cache"
     real_dir.mkdir()
     link = tmp_path / "lecture-rag"
@@ -124,8 +150,9 @@ def test_corpus_cache_dir_falls_back_for_symlinked_directory(
     cache_dir = corpus_cache_dir()
 
     assert cache_dir != link
-    assert cache_dir.is_dir()
     assert not cache_dir.is_symlink()
+    assert_private_fallback(cache_dir, tempdir)
+    assert corpus_cache_dir() == cache_dir
 
 
 def test_corpus_cache_dir_falls_back_for_another_owner(
@@ -136,6 +163,7 @@ def test_corpus_cache_dir_falls_back_for_another_owner(
     if not hasattr(os, "getuid"):
         pytest.skip("os.getuid is not available on this platform")
 
+    tempdir = use_fallback_tempdir(monkeypatch, tmp_path)
     owned_dir = tmp_path / "lecture-rag"
     owned_dir.mkdir(mode=0o700)
     current_uid = os.getuid()
@@ -145,15 +173,36 @@ def test_corpus_cache_dir_falls_back_for_another_owner(
     cache_dir = corpus_cache_dir()
 
     assert cache_dir != owned_dir
-    assert cache_dir.is_dir()
+    assert_private_fallback(cache_dir, tempdir)
+    assert corpus_cache_dir() == cache_dir
 
 
-def test_build_index_atomically_installs_loadable_index(tmp_path: Path) -> None:
-    """An atomic build installs a loadable index and leaves no temporary dirs."""
+def test_corpus_cache_dir_recreates_removed_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A new fallback directory is created after the previous one is removed."""
+    tempdir = use_fallback_tempdir(monkeypatch, tmp_path)
+    shared_dir = tmp_path / "lecture-rag"
+    shared_dir.mkdir()
+    shared_dir.chmod(0o777)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+
+    first = corpus_cache_dir()
+    shutil.rmtree(first)
+    second = corpus_cache_dir()
+
+    assert first != second
+    assert_private_fallback(second, tempdir)
+    assert corpus_cache_dir() == second
+
+
+def test_build_and_install_index_installs_loadable_index(tmp_path: Path) -> None:
+    """A build installs a loadable index and leaves no temporary dirs."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
 
-    index_dir = build_index_atomically(
+    index_dir = build_and_install_index(
         SAMPLE_DIR,
         cache_dir,
         HashingEmbeddingModel(),
@@ -167,14 +216,14 @@ def test_build_index_atomically_installs_loadable_index(tmp_path: Path) -> None:
     assert list(cache_dir.glob(".corpus-index-*")) == []
 
 
-def test_build_index_atomically_keeps_existing_index_on_failure(
+def test_build_and_install_index_keeps_existing_index_on_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """A failed build removes its temporary dir and keeps the existing index."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    index_dir = build_index_atomically(
+    index_dir = build_and_install_index(
         SAMPLE_DIR,
         cache_dir,
         HashingEmbeddingModel(),
@@ -188,7 +237,7 @@ def test_build_index_atomically_keeps_existing_index_on_failure(
     monkeypatch.setattr(corpus_index, "build_index", failing_build)
 
     with pytest.raises(RuntimeError, match="build failed"):
-        build_index_atomically(
+        build_and_install_index(
             SAMPLE_DIR,
             cache_dir,
             HashingEmbeddingModel(),
@@ -199,7 +248,7 @@ def test_build_index_atomically_keeps_existing_index_on_failure(
     assert list(cache_dir.glob(".corpus-index-*")) == []
 
 
-def test_build_index_atomically_replaces_stale_index(tmp_path: Path) -> None:
+def test_build_and_install_index_replaces_stale_index(tmp_path: Path) -> None:
     """An existing stale index directory is replaced by the new build."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
@@ -207,7 +256,7 @@ def test_build_index_atomically_replaces_stale_index(tmp_path: Path) -> None:
     stale_dir.mkdir()
     (stale_dir / "stale.txt").write_text("stale", encoding="utf-8")
 
-    index_dir = build_index_atomically(
+    index_dir = build_and_install_index(
         SAMPLE_DIR,
         cache_dir,
         HashingEmbeddingModel(),
@@ -219,7 +268,7 @@ def test_build_index_atomically_replaces_stale_index(tmp_path: Path) -> None:
     assert VectorIndex.load(index_dir).documents
 
 
-def test_build_index_atomically_replaces_target_symlink(tmp_path: Path) -> None:
+def test_build_and_install_index_replaces_target_symlink(tmp_path: Path) -> None:
     """A symlink at the target is replaced without touching its destination."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
@@ -230,7 +279,7 @@ def test_build_index_atomically_replaces_target_symlink(tmp_path: Path) -> None:
     target = cache_dir / CORPUS_INDEX_NAME
     os.symlink(destination, target)
 
-    index_dir = build_index_atomically(
+    index_dir = build_and_install_index(
         SAMPLE_DIR,
         cache_dir,
         HashingEmbeddingModel(),
@@ -242,3 +291,121 @@ def test_build_index_atomically_replaces_target_symlink(tmp_path: Path) -> None:
     assert index_dir.is_dir()
     assert marker.read_text(encoding="utf-8") == "keep me"
     assert VectorIndex.load(index_dir).documents
+
+
+def test_corpus_fingerprint_is_stable(tmp_path: Path) -> None:
+    """The fingerprint is a stable SHA-256 digest of the PDF contents."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    (corpus_dir / "a.pdf").write_bytes(b"first")
+    (corpus_dir / "b.PDF").write_bytes(b"second")
+
+    first = corpus_fingerprint(corpus_dir)
+
+    assert first == corpus_fingerprint(corpus_dir)
+    assert len(first) == 64
+
+
+def test_corpus_fingerprint_changes_when_content_changes(tmp_path: Path) -> None:
+    """Changing a PDF's content changes the fingerprint."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    pdf_path = corpus_dir / "a.pdf"
+    pdf_path.write_bytes(b"first")
+    before = corpus_fingerprint(corpus_dir)
+
+    pdf_path.write_bytes(b"second")
+
+    assert corpus_fingerprint(corpus_dir) != before
+
+
+def test_corpus_fingerprint_changes_when_file_is_added(tmp_path: Path) -> None:
+    """Adding a PDF changes the fingerprint."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    (corpus_dir / "a.pdf").write_bytes(b"first")
+    before = corpus_fingerprint(corpus_dir)
+
+    (corpus_dir / "b.pdf").write_bytes(b"second")
+
+    assert corpus_fingerprint(corpus_dir) != before
+
+
+def test_corpus_fingerprint_changes_when_file_is_renamed(tmp_path: Path) -> None:
+    """Renaming a PDF changes the fingerprint even when its content is unchanged."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    (corpus_dir / "a.pdf").write_bytes(b"content")
+    before = corpus_fingerprint(corpus_dir)
+
+    (corpus_dir / "a.pdf").rename(corpus_dir / "b.pdf")
+
+    assert corpus_fingerprint(corpus_dir) != before
+
+
+def test_corpus_fingerprint_ignores_non_pdf_files(tmp_path: Path) -> None:
+    """Files without a PDF suffix do not affect the fingerprint."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    (corpus_dir / "a.pdf").write_bytes(b"content")
+    before = corpus_fingerprint(corpus_dir)
+
+    (corpus_dir / "notes.txt").write_text("ignored", encoding="utf-8")
+    (corpus_dir / "nested").mkdir()
+    (corpus_dir / "nested" / "b.pdf").write_bytes(b"ignored")
+
+    assert corpus_fingerprint(corpus_dir) == before
+
+
+def test_corpus_index_name_uses_fingerprint_prefix() -> None:
+    """The index name is derived from the first 16 fingerprint characters."""
+    fingerprint = "0123456789abcdef" + "f" * 48
+
+    assert corpus_index_name(fingerprint) == "corpus-index-0123456789abcdef"
+
+
+def test_changed_corpus_builds_a_new_index_and_removes_the_old_one(
+    tmp_path: Path,
+) -> None:
+    """A changed corpus uses its own index directory and removes stale siblings."""
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+    shutil.copy(SAMPLE_DIR / "algorithms.pdf", corpus_dir / "algorithms.pdf")
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    first_fingerprint = corpus_fingerprint(corpus_dir)
+    first_name = corpus_index_name(first_fingerprint)
+    first_index = build_and_install_index(
+        corpus_dir,
+        cache_dir,
+        HashingEmbeddingModel(),
+        MODEL_NAME,
+        index_name=first_name,
+    )
+
+    assert first_index == cache_dir / first_name
+    assert VectorIndex.load(first_index).documents
+
+    shutil.copy(SAMPLE_DIR / "data_structures.pdf", corpus_dir / "data_structures.pdf")
+    legacy_dir = cache_dir / CORPUS_INDEX_NAME
+    legacy_dir.mkdir()
+    (legacy_dir / "stale.txt").write_text("stale", encoding="utf-8")
+
+    second_fingerprint = corpus_fingerprint(corpus_dir)
+    second_name = corpus_index_name(second_fingerprint)
+    assert second_fingerprint != first_fingerprint
+
+    second_index = build_and_install_index(
+        corpus_dir,
+        cache_dir,
+        HashingEmbeddingModel(),
+        MODEL_NAME,
+        index_name=second_name,
+    )
+
+    assert second_index == cache_dir / second_name
+    assert VectorIndex.load(second_index).documents
+    assert not first_index.exists()
+    assert not legacy_dir.exists()
+    assert sorted(path.name for path in cache_dir.glob("corpus-index-*")) == [second_name]

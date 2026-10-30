@@ -146,6 +146,18 @@ def load_pdf(
     return documents
 
 
+def list_pdf_files(directory: Path) -> list[Path]:
+    """List the PDF files directly inside a directory.
+
+    Args:
+        directory: Path to the directory to inspect
+
+    Returns:
+        The PDF paths sorted by name, using a case-insensitive suffix check
+    """
+    return sorted(path for path in directory.iterdir() if path.suffix.lower() == ".pdf")
+
+
 def load_directory(
     directory: Path,
     max_file_size_mb: float | None = None,
@@ -172,7 +184,7 @@ def load_directory(
 
     max_file_size_mb, max_pages = _resolve_limits(max_file_size_mb, max_pages)
 
-    pdf_files = sorted(path for path in directory.iterdir() if path.suffix.lower() == ".pdf")
+    pdf_files = list_pdf_files(directory)
 
     if not pdf_files:
         logger.warning(f"No PDF files found in {directory}")

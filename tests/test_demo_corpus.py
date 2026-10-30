@@ -13,15 +13,18 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 import demo  # noqa: E402
 from lecture_rag import corpus_index  # noqa: E402
 from lecture_rag.corpus_index import (  # noqa: E402
+    build_and_install_index,
     build_index,
-    build_index_atomically,
+    corpus_fingerprint,
+    corpus_index_name,
     resolve_corpus_dir,
 )
+from lecture_rag.embeddings import EmbeddingModelError  # noqa: E402
 from lecture_rag.generation import (  # noqa: E402
     OpenAICompatibleProvider,
     redact_secrets,
 )
-from lecture_rag.index import VectorIndex  # noqa: E402
+from lecture_rag.index import InvalidIndexError, VectorIndex  # noqa: E402
 from lecture_rag.models import Document, RetrievalResult  # noqa: E402
 from tests.conftest import HashingEmbeddingModel  # noqa: E402
 
@@ -59,11 +62,13 @@ def corpus_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
     base = tmp_path_factory.mktemp("corpus-cache")
     cache_dir = base / "lecture-rag"
     cache_dir.mkdir(mode=0o700)
-    build_index_atomically(
+    fingerprint = corpus_fingerprint(CORPUS_DIR)
+    build_and_install_index(
         CORPUS_DIR,
         cache_dir,
         HashingEmbeddingModel(),
         MODEL_NAME,
+        index_name=corpus_index_name(fingerprint),
     )
     return base
 
@@ -86,12 +91,13 @@ def all_output_values(app: AppTest) -> list[str]:
 def run_corpus_app(
     monkeypatch: pytest.MonkeyPatch,
     cache_base: Path,
+    embedding_model: type = HashingEmbeddingModel,
 ) -> AppTest:
     """Run the demo in corpus mode against a temporary index cache."""
     monkeypatch.setenv("LECTURE_RAG_DEMO_MODE", "corpus")
     monkeypatch.setenv("LECTURE_RAG_ABSTAIN_THRESHOLD", "0")
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_base))
-    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", HashingEmbeddingModel)
+    monkeypatch.setattr("lecture_rag.embeddings.EmbeddingModel", embedding_model)
     streamlit.cache_resource.clear()
     return AppTest.from_file(str(REPO_ROOT / "demo.py"), default_timeout=120).run()
 
@@ -119,11 +125,11 @@ def test_corpus_mode_loads_from_a_different_working_directory(
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(-5, 1), (0, 1), (5, 5), (demo.MAX_SOURCES + 1, demo.MAX_SOURCES)],
+    [(0, 1), (-3, 1), (1, 1), (5, 5), (10, 10), (11, 10), (100, 10)],
 )
 def test_source_count_is_clamped(value: int, expected: int) -> None:
     """Out-of-range source counts are clamped to the slider bounds."""
-    assert max(1, min(value, demo.MAX_SOURCES)) == expected
+    assert demo.clamp_sources(value) == expected
 
 
 class FakeCompletions:
@@ -333,13 +339,13 @@ def test_corpus_index_is_reused_on_second_run(
 ) -> None:
     """A second run loads the existing index instead of rebuilding it."""
     calls: list[tuple[object, ...]] = []
-    real_build = corpus_index.build_index_atomically
+    real_build = corpus_index.build_and_install_index
 
     def counting_build(*args: object, **kwargs: object) -> Path:
         calls.append(args)
         return real_build(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(corpus_index, "build_index_atomically", counting_build)
+    monkeypatch.setattr(corpus_index, "build_and_install_index", counting_build)
 
     first = run_corpus_app(monkeypatch, tmp_path)
     assert not first.exception
@@ -362,7 +368,7 @@ def test_corpus_build_failure_hides_filesystem_details(
     def failing_build(*args: object, **kwargs: object) -> Path:
         raise OSError(detail)
 
-    monkeypatch.setattr(corpus_index, "build_index_atomically", failing_build)
+    monkeypatch.setattr(corpus_index, "build_and_install_index", failing_build)
 
     with caplog.at_level(logging.ERROR):
         app = run_corpus_app(monkeypatch, tmp_path)
@@ -382,6 +388,59 @@ def test_corpus_build_failure_hides_filesystem_details(
 
     assert secret_path in caplog.text
     assert "Directory not found" in caplog.text
+
+
+class FailingEmbeddingModel:
+    """Embedding model that fails to load with a secret-bearing message."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise EmbeddingModelError("model load failed for /secret/model")
+
+
+def test_corpus_embedding_model_error_hides_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Embedding model failures show a fixed message and log the details."""
+    detail = "model load failed for /secret/model"
+
+    with caplog.at_level(logging.ERROR):
+        app = run_corpus_app(monkeypatch, tmp_path, embedding_model=FailingEmbeddingModel)
+
+    assert not app.exception
+    assert any(
+        "The embedding model could not be loaded. Please try again later." in error
+        for error in element_values(app, ("error",))
+    )
+    values = all_output_values(app)
+    assert all(detail not in value for value in values)
+    assert detail in caplog.text
+
+
+def test_corpus_invalid_index_error_hides_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Invalid corpus indexes show a fixed message and log the details."""
+    detail = "Invalid index at /secret/x"
+
+    def failing_build(*args: object, **kwargs: object) -> Path:
+        raise InvalidIndexError(detail)
+
+    monkeypatch.setattr(corpus_index, "build_and_install_index", failing_build)
+
+    with caplog.at_level(logging.ERROR):
+        app = run_corpus_app(monkeypatch, tmp_path)
+
+    assert not app.exception
+    assert any(
+        demo.CORPUS_INVALID_INDEX_MESSAGE in error for error in element_values(app, ("error",))
+    )
+    values = all_output_values(app)
+    assert all(detail not in value for value in values)
+    assert detail in caplog.text
 
 
 def test_corpus_llm_error_never_exposes_key(

@@ -20,6 +20,7 @@ from .eval import (
 )
 from .generation import Generator
 from .index import IndexModelMismatchError, InvalidIndexError
+from .pdf_loader import list_pdf_files
 from .rerank import CrossEncoderReranker, RerankerError, default_rerank_model
 from .retrieval import (
     RetrievalMode,
@@ -212,6 +213,9 @@ def ingest(
 
     if not model.strip():
         raise click.BadParameter("must not be empty", param_hint="--model")
+
+    if not list_pdf_files(input_dir):
+        raise click.ClickException(f"No PDF files found in {input_dir}")
 
     try:
         embedding_model = EmbeddingModel(model)

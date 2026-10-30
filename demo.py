@@ -49,7 +49,7 @@ import streamlit as st
 from dotenv import find_dotenv, load_dotenv
 
 from lecture_rag import corpus_index, embeddings
-from lecture_rag.corpus_index import CORPUS_INDEX_NAME, resolve_corpus_dir
+from lecture_rag.corpus_index import resolve_corpus_dir
 from lecture_rag.embeddings import EmbeddingModelError
 from lecture_rag.generation import (
     ExtractiveFallbackProvider,
@@ -125,6 +125,18 @@ def is_query_too_long(query: str) -> bool:
     return len(query) > MAX_QUERY_CHARS
 
 
+def clamp_sources(k: int) -> int:
+    """Clamp a source count to the supported range.
+
+    Args:
+        k: Requested number of sources
+
+    Returns:
+        The value limited to between 1 and MAX_SOURCES
+    """
+    return max(1, min(k, MAX_SOURCES))
+
+
 @st.cache_resource
 def load_retriever(
     index_path: str,
@@ -168,15 +180,26 @@ def _load_existing_corpus_index(
 # The retriever from st.cache_resource is shared by all sessions, so the
 # embedding model and index are loaded only once per deployment.
 @st.cache_resource(show_spinner=False)
-def build_corpus_retriever(model_name: str, corpus_dir: str) -> Retriever:
+def build_corpus_retriever(
+    model_name: str,
+    corpus_dir: str,
+    fingerprint: str,
+) -> Retriever:
     """Build or load the corpus retriever (cached)."""
     cache_dir = corpus_index.corpus_cache_dir()
-    index_dir = cache_dir / CORPUS_INDEX_NAME
+    index_name = corpus_index.corpus_index_name(fingerprint)
+    index_dir = cache_dir / index_name
     model = embeddings.EmbeddingModel(model_name)
     index = _load_existing_corpus_index(index_dir, model_name, model.dimension)
 
     if index is None:
-        corpus_index.build_index_atomically(Path(corpus_dir), cache_dir, model, model_name)
+        corpus_index.build_and_install_index(
+            Path(corpus_dir),
+            cache_dir,
+            model,
+            model_name,
+            index_name=index_name,
+        )
         index = VectorIndex.load(index_dir)
 
     return Retriever(model, index, mode="dense")
@@ -356,7 +379,7 @@ def _render_local() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    k = max(1, min(k, MAX_SOURCES))
+    k = clamp_sources(k)
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -449,7 +472,7 @@ def _render_corpus() -> None:
         max_value=MAX_SOURCES,
         value=5,
     )
-    k = max(1, min(k, MAX_SOURCES))
+    k = clamp_sources(k)
     answer_mode = st.sidebar.selectbox(
         "Answer Mode",
         options=["extractive", "llm"],
@@ -489,14 +512,17 @@ def _render_corpus() -> None:
         "Building the search index from data/corpus on first start. This takes about a minute."
     ):
         try:
+            corpus_dir = resolve_corpus_dir(APP_DIR)
+            fingerprint = corpus_index.corpus_fingerprint(corpus_dir)
             retriever = build_corpus_retriever(
                 CORPUS_MODEL_NAME,
-                str(resolve_corpus_dir(APP_DIR)),
+                str(corpus_dir),
+                fingerprint,
             )
             st.sidebar.success(f"Loaded index with {len(retriever.index.documents)} documents")
-        except EmbeddingModelError as e:
-            st.error("Failed to load the embedding model.")
-            st.code(str(e), language=None)
+        except EmbeddingModelError:
+            logger.exception("Corpus embedding model load failed")
+            st.error("The embedding model could not be loaded. Please try again later.")
             st.stop()
         except InvalidIndexError:
             logger.exception("Corpus index load failed")
